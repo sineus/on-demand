@@ -7,14 +7,21 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { isMainnetConnection, ON_DEMAND_DEVNET_PID, ON_DEMAND_MAINNET_PID, } from "../utils";
-import * as anchor from "@coral-xyz/anchor-30";
-import NodeWallet from "@coral-xyz/anchor-30/dist/cjs/nodewallet.js";
-import { Connection, Keypair } from "@solana/web3.js";
-import * as fs from "fs";
-import yaml from "js-yaml";
-import os from "os";
-import path from "path";
+import { isDevnetConnection, isMainnetConnection, ON_DEMAND_DEVNET_PID, ON_DEMAND_MAINNET_PID, } from '../utils';
+import { getFs } from '../utils/fs';
+import { AnchorProvider, BorshEventCoder, Program, web3, } from '@coral-xyz/anchor-31';
+import yaml from 'js-yaml';
+import os from 'os';
+import path from 'path';
+const readonlyWallet = {
+    publicKey: web3.PublicKey.default,
+    signTransaction: () => {
+        throw new Error('Program is in `readonly` mode.');
+    },
+    signAllTransactions: () => {
+        throw new Error('Program is in `readonly` mode.');
+    },
+};
 /*
  * AnchorUtils is a utility class that provides helper functions for working with
  * the Anchor framework. It is a static class, meaning that it does not need to be
@@ -22,16 +29,22 @@ import path from "path";
  * to simplify common tasks when working with Anchor.
  */
 export class AnchorUtils {
+    static initWalletFromKeypair(keypair) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const { default: NodeWallet } = yield import('@coral-xyz/anchor-31/dist/cjs/nodewallet');
+            return new NodeWallet(keypair);
+        });
+    }
     /**
      * Initializes a wallet from a file.
      *
      * @param {string} filePath - The path to the file containing the wallet's secret key.
-     * @returns {Promise<[NodeWallet, Keypair]>} A promise that resolves to a tuple containing the wallet and the keypair.
+     * @returns {Promise<[Wallet, web3.Keypair]>} A promise that resolves to a tuple containing the wallet and the keypair.
      */
     static initWalletFromFile(filePath) {
         return __awaiter(this, void 0, void 0, function* () {
             const keypair = yield AnchorUtils.initKeypairFromFile(filePath);
-            const wallet = new NodeWallet(keypair);
+            const wallet = yield AnchorUtils.initWalletFromKeypair(keypair);
             return [wallet, keypair];
         });
     }
@@ -39,32 +52,59 @@ export class AnchorUtils {
      * Initializes a keypair from a file.
      *
      * @param {string} filePath - The path to the file containing the keypair's secret key.
-     * @returns {Promise<Keypair>} A promise that resolves to the keypair.
+     * @returns {Promise<web3.Keypair>} A promise that resolves to the keypair.
      */
     static initKeypairFromFile(filePath) {
         return __awaiter(this, void 0, void 0, function* () {
-            const secretKeyString = fs.readFileSync(filePath, { encoding: "utf8" });
+            const secretKeyString = getFs().readFileSync(filePath, {
+                encoding: 'utf8',
+            });
             const secretKey = Uint8Array.from(JSON.parse(secretKeyString));
-            const keypair = Keypair.fromSecretKey(secretKey);
+            const keypair = web3.Keypair.fromSecretKey(secretKey);
             return keypair;
+        });
+    }
+    /**
+     * Loads an Anchor program from a connection.
+     *
+     * @param {web3.Connection} connection - The connection to load the program from.
+     * @returns {Promise<Program>} A promise that resolves to the loaded Anchor program.
+     */
+    static loadProgramFromConnection(connection, wallet, programId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const provider = new AnchorProvider(connection, wallet !== null && wallet !== void 0 ? wallet : readonlyWallet);
+            return AnchorUtils.loadProgramFromProvider(provider, programId);
+        });
+    }
+    /**
+     * Loads an Anchor program from a provider.
+     *
+     * @param {Provider} provider - The provider to load the program from.
+     * @param {web3.PublicKey} programId - An optional program ID to load the program from.
+     * @returns {Promise<Program>} A promise that resolves to the loaded Anchor program.
+     */
+    static loadProgramFromProvider(provider, programId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const pid = yield (() => __awaiter(this, void 0, void 0, function* () {
+                if (programId)
+                    return programId;
+                const isSolanaDevnet = yield isDevnetConnection(provider.connection);
+                return isSolanaDevnet ? ON_DEMAND_DEVNET_PID : ON_DEMAND_MAINNET_PID;
+            }))();
+            return yield Program.at(pid, provider);
         });
     }
     /**
      * Loads an Anchor program from the environment.
      *
-     * @returns {Promise<anchor.Program>} A promise that resolves to the loaded Anchor program.
+     * @returns {Promise<Program>} A promise that resolves to the loaded Anchor program.
      */
     static loadProgramFromEnv() {
         return __awaiter(this, void 0, void 0, function* () {
             const config = yield AnchorUtils.loadEnv();
-            const isMainnet = isMainnetConnection(config.connection);
-            let pid = ON_DEMAND_MAINNET_PID;
-            if (!isMainnet) {
-                pid = ON_DEMAND_DEVNET_PID;
-            }
-            const idl = (yield anchor.Program.fetchIdl(pid, config.provider));
-            const program = new anchor.Program(idl, config.provider);
-            return new anchor.Program(idl, config.provider);
+            const isDevnet = yield isDevnetConnection(config.connection);
+            const pid = isDevnet ? ON_DEMAND_DEVNET_PID : ON_DEMAND_MAINNET_PID;
+            return Program.at(pid, config.provider);
         });
     }
     /**
@@ -74,61 +114,54 @@ export class AnchorUtils {
      */
     static loadEnv() {
         return __awaiter(this, void 0, void 0, function* () {
-            const configPath = path.join(os.homedir(), ".config", "solana", "cli", "config.yml");
-            const fileContents = fs.readFileSync(configPath, "utf8");
+            var _a;
+            const configPath = path.join(os.homedir(), '.config/solana/cli/config.yml');
+            const fileContents = getFs().readFileSync(configPath, 'utf8');
             const data = yaml.load(fileContents);
-            const defaultCon = new Connection("https://api.devnet.solana.com");
-            const defaultKeypair = Keypair.generate();
-            const config = {
-                rpcUrl: data.json_rpc_url,
+            const commitment = data.commitment;
+            const connection = new web3.Connection(data.json_rpc_url, {
+                commitment,
+                wsEndpoint: data.websocket_url,
+            });
+            const keypairPath = data.keypair_path;
+            const keypair = (yield AnchorUtils.initWalletFromFile(keypairPath))[1];
+            const wallet = yield this.initWalletFromKeypair(keypair);
+            const provider = new AnchorProvider(connection, wallet);
+            const isMainnet = yield isMainnetConnection(connection);
+            const pid = isMainnet ? ON_DEMAND_MAINNET_PID : ON_DEMAND_DEVNET_PID;
+            const program = yield Program.at(pid, provider);
+            return {
+                rpcUrl: connection.rpcEndpoint,
                 webSocketUrl: data.websocket_url,
-                keypairPath: data.keypair_path,
-                commitment: data.commitment,
-                keypair: data.keypair_path,
-                connection: defaultCon,
-                provider: new anchor.AnchorProvider(defaultCon, new NodeWallet(defaultKeypair), {}),
-                wallet: new NodeWallet(defaultKeypair),
-                program: null,
+                connection: connection,
+                commitment: (_a = connection.commitment) !== null && _a !== void 0 ? _a : 'confirmed',
+                keypairPath: keypairPath,
+                keypair: keypair,
+                provider: provider,
+                wallet: wallet,
+                program: program,
             };
-            config.keypair = (yield AnchorUtils.initWalletFromFile(config.keypairPath))[1];
-            config.connection = new Connection(config.rpcUrl, {
-                commitment: "confirmed",
-            });
-            config.wallet = new NodeWallet(config.keypair);
-            config.provider = new anchor.AnchorProvider(config.connection, config.wallet, {
-                preflightCommitment: "confirmed",
-                commitment: "confirmed",
-            });
-            const isMainnet = yield isMainnetConnection(config.connection);
-            let pid = ON_DEMAND_MAINNET_PID;
-            if (!isMainnet) {
-                pid = ON_DEMAND_DEVNET_PID;
-            }
-            const idl = (yield anchor.Program.fetchIdl(pid, config.provider));
-            const program = new anchor.Program(idl, config.provider);
-            config.program = program;
-            return config;
         });
     }
     /**
      * Parse out anchor events from the logs present in the program IDL.
      *
-     * @param {anchor.Program} program - The Anchor program instance.
+     * @param {Program} program - The Anchor program instance.
      * @param {string[]} logs - The array of logs to parse.
      * @returns {any[]} An array of parsed events.
      */
     static loggedEvents(program, logs) {
-        const coder = new anchor.BorshEventCoder(program.idl);
+        const coder = new BorshEventCoder(program.idl);
         const out = [];
-        logs.forEach((log) => {
-            if (log.startsWith("Program data: ")) {
-                const strings = log.split(" ");
+        logs.forEach(log => {
+            if (log.startsWith('Program data: ')) {
+                const strings = log.split(' ');
                 if (strings.length !== 3)
                     return;
                 try {
                     out.push(coder.decode(strings[2]));
                 }
-                catch (_a) { }
+                catch (_a) { } // eslint-disable-line no-empty
             }
         });
         return out;

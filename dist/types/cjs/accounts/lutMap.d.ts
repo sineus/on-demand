@@ -1,6 +1,5 @@
-import type { BN, Program } from "@coral-xyz/anchor-30";
-import type { AddressLookupTableState, TransactionInstruction } from "@solana/web3.js";
-import { PublicKey } from "@solana/web3.js";
+import type { BN, Program } from '@coral-xyz/anchor-31';
+import { web3 } from '@coral-xyz/anchor-31';
 /**
  *  A map of LUTs to their public keys.
  *
@@ -9,11 +8,11 @@ import { PublicKey } from "@solana/web3.js";
  */
 export declare class LutMap {
     readonly program: Program;
-    readonly pubkey: PublicKey;
+    readonly pubkey: web3.PublicKey;
     /**
      *  The public key of the LUT map account.
      */
-    static keyFromSeed(program: Program, queue: PublicKey, authority: PublicKey): Promise<PublicKey>;
+    static keyFromSeed(program: Program, queue: web3.PublicKey, authority: web3.PublicKey): Promise<web3.PublicKey>;
     /**
      * Creating a LUT map account will allow a user or protocol to easy manage
      * and associate a common account grouping for their feeds to reduce the
@@ -25,13 +24,13 @@ export declare class LutMap {
      * @param slot - The slot that the LUT map is associated with.
      * @returns A promise that resolves to the LUT map and the transaction signature.
      */
-    static create(program: Program, queue: PublicKey, slot: BN): Promise<[LutMap, string]>;
-    constructor(program: Program, pubkey: PublicKey);
+    static create(program: Program, queue: web3.PublicKey, slot: BN): Promise<[LutMap, string]>;
+    constructor(program: Program, pubkey: web3.PublicKey);
     queueLutExtendIx(params: {
-        queue: PublicKey;
-        newKey: PublicKey;
-        payer: PublicKey;
-    }): Promise<TransactionInstruction>;
+        queue: web3.PublicKey;
+        newKey: web3.PublicKey;
+        payer: web3.PublicKey;
+    }): Promise<web3.TransactionInstruction>;
     /**
      *  Loads the data for this {@linkcode LutMap} account from on chain.
      *
@@ -39,7 +38,7 @@ export declare class LutMap {
      *  @throws if the account does not exist.
      */
     loadData(): Promise<any>;
-    loadLut(): Promise<[PublicKey, AddressLookupTableState]>;
-    syncLut(feeds: PublicKey[]): Promise<void>;
+    loadLut(): Promise<[web3.PublicKey, web3.AddressLookupTableState]>;
+    syncLut(feeds: web3.PublicKey[]): Promise<void>;
 }
 //# sourceMappingURL=lutMap.d.ts.map

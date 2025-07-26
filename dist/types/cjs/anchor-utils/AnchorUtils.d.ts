@@ -1,39 +1,52 @@
-import * as anchor from "@coral-xyz/anchor-30";
-import NodeWallet from "@coral-xyz/anchor-30/dist/cjs/nodewallet.js";
-import type { Commitment } from "@solana/web3.js";
-import { Connection, Keypair } from "@solana/web3.js";
+import { AnchorProvider, Program, Provider, Wallet, web3 } from '@coral-xyz/anchor-31';
 type SolanaConfig = {
     rpcUrl: string;
     webSocketUrl: string;
     keypairPath: string;
-    commitment: Commitment;
-    keypair: Keypair;
-    connection: Connection;
-    provider: anchor.AnchorProvider;
-    wallet: NodeWallet;
-    program: anchor.Program | null;
+    commitment: web3.Commitment;
+    keypair: web3.Keypair;
+    connection: web3.Connection;
+    provider: AnchorProvider;
+    wallet: Wallet;
+    program: Program | null;
 };
 export declare class AnchorUtils {
+    private static initWalletFromKeypair;
     /**
      * Initializes a wallet from a file.
      *
      * @param {string} filePath - The path to the file containing the wallet's secret key.
-     * @returns {Promise<[NodeWallet, Keypair]>} A promise that resolves to a tuple containing the wallet and the keypair.
+     * @returns {Promise<[Wallet, web3.Keypair]>} A promise that resolves to a tuple containing the wallet and the keypair.
      */
-    static initWalletFromFile(filePath: string): Promise<[NodeWallet, Keypair]>;
+    static initWalletFromFile(filePath: string): Promise<readonly [import("@coral-xyz/anchor-31/dist/cjs/nodewallet").default, web3.Keypair]>;
     /**
      * Initializes a keypair from a file.
      *
      * @param {string} filePath - The path to the file containing the keypair's secret key.
-     * @returns {Promise<Keypair>} A promise that resolves to the keypair.
+     * @returns {Promise<web3.Keypair>} A promise that resolves to the keypair.
      */
-    static initKeypairFromFile(filePath: string): Promise<Keypair>;
+    static initKeypairFromFile(filePath: string): Promise<web3.Keypair>;
+    /**
+     * Loads an Anchor program from a connection.
+     *
+     * @param {web3.Connection} connection - The connection to load the program from.
+     * @returns {Promise<Program>} A promise that resolves to the loaded Anchor program.
+     */
+    static loadProgramFromConnection(connection: web3.Connection, wallet?: Wallet, programId?: web3.PublicKey): Promise<Program<import("@coral-xyz/anchor-31").Idl>>;
+    /**
+     * Loads an Anchor program from a provider.
+     *
+     * @param {Provider} provider - The provider to load the program from.
+     * @param {web3.PublicKey} programId - An optional program ID to load the program from.
+     * @returns {Promise<Program>} A promise that resolves to the loaded Anchor program.
+     */
+    static loadProgramFromProvider(provider: Provider, programId?: web3.PublicKey): Promise<Program<import("@coral-xyz/anchor-31").Idl>>;
     /**
      * Loads an Anchor program from the environment.
      *
-     * @returns {Promise<anchor.Program>} A promise that resolves to the loaded Anchor program.
+     * @returns {Promise<Program>} A promise that resolves to the loaded Anchor program.
      */
-    static loadProgramFromEnv(): Promise<anchor.Program>;
+    static loadProgramFromEnv(): Promise<Program>;
     /**
      * Loads the same environment set for the Solana CLI.
      *
@@ -43,11 +56,14 @@ export declare class AnchorUtils {
     /**
      * Parse out anchor events from the logs present in the program IDL.
      *
-     * @param {anchor.Program} program - The Anchor program instance.
+     * @param {Program} program - The Anchor program instance.
      * @param {string[]} logs - The array of logs to parse.
      * @returns {any[]} An array of parsed events.
      */
-    static loggedEvents(program: anchor.Program, logs: string[]): any[];
+    static loggedEvents(program: Program, logs: string[]): ({
+        name: string;
+        data: any;
+    } | null)[];
 }
 export {};
 //# sourceMappingURL=AnchorUtils.d.ts.map

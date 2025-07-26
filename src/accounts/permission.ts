@@ -1,5 +1,6 @@
-import type { Program } from "@coral-xyz/anchor-30";
-import type { PublicKey, TransactionInstruction } from "@solana/web3.js";
+import { getNodePayer } from '../utils/index.js';
+
+import type { Program, web3 } from '@coral-xyz/anchor-31';
 
 export enum SwitchboardPermission {
   PermitOracleHeartbeat = 1 << 0,
@@ -20,14 +21,14 @@ export class Permission {
   static async setIx(
     program: Program,
     params: {
-      authority: PublicKey;
-      granter: PublicKey;
-      grantee: PublicKey;
+      authority: web3.PublicKey;
+      granter: web3.PublicKey;
+      grantee: web3.PublicKey;
       enable?: boolean;
       permission: SwitchboardPermission;
     }
-  ): Promise<TransactionInstruction> {
-    const payer = (program.provider as any).wallet.payer;
+  ): Promise<web3.TransactionInstruction> {
+    const payer = getNodePayer(program);
     const ix = await program.instruction.permissionSet(
       {
         enable: params.enable ?? false,

@@ -1,6 +1,5 @@
-import { type Program } from "@coral-xyz/anchor-30";
-import type { TransactionInstruction } from "@solana/web3.js";
-import { Keypair, PublicKey } from "@solana/web3.js";
+import type { Program } from '@coral-xyz/anchor-31';
+import { web3 } from '@coral-xyz/anchor-31';
 /**
  * Switchboard commit-reveal randomness.
  * This account type controls commit-reveal style randomness employing
@@ -18,14 +17,15 @@ import { Keypair, PublicKey } from "@solana/web3.js";
  */
 export declare class Randomness {
     readonly program: Program;
-    readonly pubkey: PublicKey;
+    readonly pubkey: web3.PublicKey;
+    private static getPayer;
     /**
      * Constructs a `Randomness` instance.
      *
      * @param {Program} program - The Anchor program instance.
-     * @param {PublicKey} pubkey - The public key of the randomness account.
+     * @param {web3.PublicKey} pubkey - The public key of the randomness account.
      */
-    constructor(program: Program, pubkey: PublicKey);
+    constructor(program: Program, pubkey: web3.PublicKey);
     /**
      * Loads the randomness data for this {@linkcode Randomness} account from on chain.
      *
@@ -37,12 +37,12 @@ export declare class Randomness {
      * Creates a new `Randomness` account.
      *
      * @param {Program} program - The Anchor program instance.
-     * @param {Keypair} kp - The keypair of the new `Randomness` account.
-     * @param {PublicKey} queue - The queue account to associate with the new `Randomness` account.
-     * @param {PublicKey} [payer_] - The payer for the transaction. If not provided, the default payer from the program provider is used.
-     * @returns {Promise<[Randomness, TransactionInstruction]>} A promise that resolves to a tuple containing the new `Randomness` account and the transaction instruction.
+     * @param {web3.Keypair} kp - The keypair of the new `Randomness` account.
+     * @param {web3.PublicKey} queue - The queue account to associate with the new `Randomness` account.
+     * @param {web3.PublicKey} [payer_] - The payer for the transaction. If not provided, the default payer from the program provider is used.
+     * @returns {Promise<[Randomness, web3.TransactionInstruction]>} A promise that resolves to a tuple containing the new `Randomness` account and the transaction instruction.
      */
-    static create(program: Program, kp: Keypair, queue: PublicKey, payer_?: PublicKey): Promise<[Randomness, TransactionInstruction]>;
+    static create(program: Program, kp: web3.Keypair, queue: web3.PublicKey, payer_?: web3.PublicKey): Promise<[Randomness, web3.TransactionInstruction]>;
     /**
      * Generate a randomness `commit` solana transaction instruction.
      * This will commit the randomness account to use currentSlot + 1 slothash
@@ -52,14 +52,14 @@ export declare class Randomness {
      * @param {PublicKey} [authority_] - The optional authority public key.
      * @returns {Promise<TransactionInstruction>} A promise that resolves to the transaction instruction.
      */
-    commitIx(queue: PublicKey, authority_?: PublicKey): Promise<TransactionInstruction>;
+    commitIx(queue: web3.PublicKey, authority_?: web3.PublicKey, oracle_?: web3.PublicKey): Promise<web3.TransactionInstruction>;
     /**
      * Generate a randomness `reveal` solana transaction instruction.
      * This will reveal the randomness using the assigned oracle.
      *
-     * @returns {Promise<TransactionInstruction>} A promise that resolves to the transaction instruction.
+     * @returns {Promise<web3.TransactionInstruction>} A promise that resolves to the transaction instruction.
      */
-    revealIx(): Promise<TransactionInstruction>;
+    revealIx(payer_?: web3.PublicKey): Promise<web3.TransactionInstruction>;
     /**
      * Commit and reveal randomness in a single transaction.
      *
@@ -71,26 +71,24 @@ export declare class Randomness {
      * @param {number} [configs.computeUnitLimit] - The compute unit limit.
      * @returns {Promise<void>} A promise that resolves when the transaction is confirmed.
      */
-    commitAndReveal(callback: TransactionInstruction[], signers: Keypair[], queue: PublicKey, configs?: {
+    commitAndReveal(callback: web3.TransactionInstruction[], signers: web3.Keypair[], queue: web3.PublicKey, configs?: {
         computeUnitPrice?: number;
         computeUnitLimit?: number;
-    }): Promise<void>;
-    /**
-     * Serialize ix to file.
-     *
-     * @param {TransactionInstruction[]} revealIxs - The reveal instruction of a transaction.
-     * @param {string} [fileName="serializedIx.bin"] - The name of the file to save the serialized IX to.
-     * @throws Will throw an error if the request fails.
-     * @returns {Promise<void>} A promise that resolves when the file has been written.
-     */
-    serializeIxToFile(revealIxs: TransactionInstruction[], fileName?: string): Promise<void>;
+    }, debug?: boolean): Promise<void>;
     /**
      * Creates a new `Randomness` account and prepares a commit transaction instruction.
      *
      * @param {Program} program - The Anchor program instance.
-     * @param {PublicKey} queue - The queue account to associate with the new `Randomness` account.
-     * @returns {Promise<[Randomness, Keypair, TransactionInstruction[]]>} A promise that resolves to a tuple containing the new `Randomness` instance, the keypair, and an array of transaction instructions.
+     * @param {web3.PublicKey} queue - The queue account to associate with the new `Randomness` account.
+     * @returns {Promise<[Randomness, web3.Keypair, web3.TransactionInstruction[]]>} A promise that resolves to a tuple containing the new `Randomness` instance, the keypair, and an array of transaction instructions.
      */
-    static createAndCommitIxs(program: Program, queue: PublicKey): Promise<[Randomness, Keypair, TransactionInstruction[]]>;
+    static createAndCommitIxs(program: Program, queue: web3.PublicKey, payer_?: web3.PublicKey): Promise<[Randomness, web3.Keypair, web3.TransactionInstruction[]]>;
+    /**
+     * Generate a randomness `close` solana transaction instruction.
+     * This will close the randomness account and return the rent to the authority.
+     *
+     * @returns {Promise<web3.TransactionInstruction>} A promise that resolves to the transaction instruction.
+     */
+    closeIx(): Promise<web3.TransactionInstruction>;
 }
 //# sourceMappingURL=randomness.d.ts.map

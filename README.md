@@ -6,8 +6,8 @@
 
 </div>
 
-# Switchboard On-Demand
-See the full documentation at [Switchboard On-Demand Documentation](https://switchboard-docs.web.app/)
+# Switchboard On-Demand (typedoc: https://switchboard-docs.web.app)
+See the full documentation at [Switchboard On-Demand Documentation](https://switchboard-labs.gitbook.io/switchboard-on-demand/)
 
 Switchboard On-Demand is designed to support high-fidelity financial systems. It allows users to specify how data from both on-chain and off-chain sources is ingested and transformed.
 
@@ -38,3 +38,65 @@ await program.provider.connection.sendTransaction(tx, {
     preflightCommitment: "processed",
 });
 ```
+
+## SwitchboardSurge - Real-time Price Streaming
+
+The `SwitchboardSurge` class provides real-time price streaming capabilities through WebSocket connections to Switchboard gateways.
+
+### Quick Start
+
+```typescript
+import { SwitchboardSurge } from '@switchboard-xyz/on-demand';
+
+// Initialize and subscribe to price feeds
+const surge = new SwitchboardSurge({
+  apiKey: 'your-api-key',
+  gatewayUrl: 'http://localhost:8082', // Your gateway URL
+});
+
+// Listen for price updates
+surge.on('data', (update) => {
+  console.log('Price update:', update.processed.values);
+});
+
+// Subscribe to feeds (validation happens automatically)
+await surge.subscribe([
+  { symbol: 'BTCUSDT', source: 'BINANCE' },
+  { symbol: 'ETHUSDT', source: 'BINANCE' },
+]);
+```
+
+### Event Handling
+
+```typescript
+surge.on('connected', () => {
+  console.log('Connected to Switchboard Surge');
+});
+
+surge.on('data', (response) => {
+  // response.processed: Ready for Solana transactions
+  console.log('Feed values:', response.processed.values);
+  console.log('Feed hashes:', response.processed.feedHashes);
+});
+
+surge.on('error', (error) => {
+  console.error('Streaming error:', error.message);
+});
+
+surge.on('disconnected', (code, reason) => {
+  console.log('Disconnected:', code, reason);
+});
+```
+
+### Configuration
+
+```typescript
+const surge = new SwitchboardSurge({
+  apiKey: 'your-api-key',
+  gatewayUrl: 'http://localhost:8082',  // Your gateway URL
+  autoReconnect: true,                  // Auto-reconnect on disconnect
+  maxReconnectAttempts: 5,              // Max reconnection attempts
+  reconnectDelay: 1000,                 // Delay between reconnects (ms)
+});
+```
+

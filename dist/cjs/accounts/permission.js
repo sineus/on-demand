@@ -10,6 +10,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Permission = exports.SwitchboardPermission = void 0;
+const index_js_1 = require("../utils/index.js");
 var SwitchboardPermission;
 (function (SwitchboardPermission) {
     SwitchboardPermission[SwitchboardPermission["PermitOracleHeartbeat"] = 1] = "PermitOracleHeartbeat";
@@ -29,7 +30,7 @@ class Permission {
     static setIx(program, params) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a;
-            const payer = program.provider.wallet.payer;
+            const payer = (0, index_js_1.getNodePayer)(program);
             const ix = yield program.instruction.permissionSet({
                 enable: (_a = params.enable) !== null && _a !== void 0 ? _a : false,
                 permission: params.permission,

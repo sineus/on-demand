@@ -1,9 +1,9 @@
-import { PublicKey } from "@solana/web3.js";
+import { web3 } from '@coral-xyz/anchor-31';
 export declare class AssociatedTokenProgram {
     private constructor();
     /**
      * Find the associated token address for the given wallet and token mint
      */
-    findAssociatedTokenAddress(walletAddress: PublicKey, tokenMintAddress: PublicKey): [PublicKey, number];
+    findAssociatedTokenAddress(walletAddress: web3.PublicKey, tokenMintAddress: web3.PublicKey): [web3.PublicKey, number];
 }
 //# sourceMappingURL=associatedToken.d.ts.map

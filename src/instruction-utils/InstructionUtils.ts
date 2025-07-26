@@ -1,92 +1,120 @@
-import * as anchor from "@coral-xyz/anchor-30";
-import type {
-  AddressLookupTableAccount,
-  Connection,
-  PublicKey,
-  Signer,
-  TransactionInstruction,
-} from "@solana/web3.js";
-import { ComputeBudgetProgram } from "@solana/web3.js";
-import { TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { web3 } from '@coral-xyz/anchor-31';
 
-/*
- * Utilities namespace for instruction related functions
- * */
+/**
+ * Transaction building utilities for Switchboard On-Demand
+ *
+ * The InstructionUtils class provides helper methods for building
+ * optimized Solana transactions, particularly versioned transactions
+ * (v0) with automatic compute budget management.
+ *
+ * @class InstructionUtils
+ */
 export class InstructionUtils {
   /**
-   * Function to convert transaction instructions to a versioned transaction.
+   *  Disable instantiation of the InstructionUtils class
+   */
+  private constructor() {}
+
+  /**
+   * Builds a versioned transaction with automatic compute budget optimization
    *
-   * @param {object} params - The parameters object.
-   * @param {Connection} params.connection - The connection to use.
-   * @param {TransactionInstruction[]} params.ixs - The transaction instructions.
-   * @param {PublicKey} [params.payer] - The payer for the transaction.
-   * @param {number} [params.computeUnitLimitMultiple] - The compute units to cap the transaction as a multiple of the simulated units consumed (e.g., 1.25x).
-   * @param {number} [params.computeUnitPrice] - The price per compute unit in microlamports.
-   * @param {AddressLookupTableAccount[]} [params.lookupTables] - The address lookup tables.
-   * @param {Signer[]} [params.signers] - The signers for the transaction.
-   * @returns {Promise<VersionedTransaction>} A promise that resolves to the versioned transaction.
+   * This method simplifies transaction creation by:
+   * - Automatically simulating to determine compute requirements
+   * - Adding appropriate compute budget instructions
+   * - Using address lookup tables for smaller transactions
+   * - Handling transaction size limits gracefully
+   *
+   * The method performs two key optimizations:
+   * 1. **Compute Budget**: Simulates first to determine actual compute usage,
+   *    then sets the limit based on actual needs (with optional buffer)
+   * 2. **Transaction Size**: Uses v0 transactions with lookup tables to
+   *    minimize transaction size
+   *
+   * @param {Object} params - Transaction building parameters
+   * @param {web3.Connection} params.connection - Solana RPC connection
+   * @param {web3.TransactionInstruction[]} params.ixs - Instructions to include
+   * @param {web3.PublicKey} params.payer - Transaction fee payer (defaults to first signer)
+   * @param {number} params.computeUnitLimitMultiple - Multiplier for compute limit (e.g., 1.3 = 30% buffer)
+   * @param {number} params.computeUnitPrice - Priority fee in microlamports per compute unit
+   * @param {web3.AddressLookupTableAccount[]} params.lookupTables - Address lookup tables to use
+   * @param {web3.Signer[]} params.signers - Transaction signers
+   * @returns {Promise<web3.VersionedTransaction>} Signed versioned transaction ready to send
+   *
+   * @throws {Error} If transaction is too large or payer not provided
+   *
+   * @example
+   * ```typescript
+   * const tx = await InstructionUtils.asV0TxWithComputeIxs({
+   *   connection,
+   *   ixs: [updateIx, userIx],
+   *   signers: [payer],
+   *   computeUnitPrice: 10_000, // 0.01 lamports per compute unit
+   *   computeUnitLimitMultiple: 1.3, // 30% safety buffer
+   *   lookupTables: [lut],
+   * });
+   *
+   * const signature = await connection.sendTransaction(tx);
+   * ```
    */
   static async asV0TxWithComputeIxs(params: {
-    connection: Connection;
-    ixs: TransactionInstruction[];
-    payer?: PublicKey;
+    connection: web3.Connection;
+    ixs: web3.TransactionInstruction[];
+    payer?: web3.PublicKey;
     computeUnitLimitMultiple?: number;
     computeUnitPrice?: number;
-    lookupTables?: AddressLookupTableAccount[];
-    signers?: Signer[];
-  }): Promise<VersionedTransaction> {
+    lookupTables?: web3.AddressLookupTableAccount[];
+    signers?: web3.Signer[];
+  }): Promise<web3.VersionedTransaction> {
     let payer = params.payer;
-    if (payer === undefined && (params.signers ?? []).length === 0) {
-      throw new Error("Payer not provided");
+    if (!payer) {
+      if (!params.signers?.length) {
+        throw new Error('Payer not provided');
+      }
+      payer = params.signers[0].publicKey;
     }
-    if (payer === undefined) {
-      payer = params.signers![0].publicKey;
-    }
-    const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({
+    const priorityFeeIx = web3.ComputeBudgetProgram.setComputeUnitPrice({
       microLamports: params.computeUnitPrice ?? 0,
     });
-    const simulationComputeLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
-      units: 1_400_000, // 1.4M compute units
-    });
+    const simulationComputeLimitIx =
+      web3.ComputeBudgetProgram.setComputeUnitLimit({
+        units: 1_400_000, // 1.4M compute units
+      });
     const recentBlockhash = (await params.connection.getLatestBlockhash())
       .blockhash;
 
-    const simulateMessageV0 = new TransactionMessage({
+    const simulateMessageV0 = new web3.TransactionMessage({
       recentBlockhash,
-      instructions: [priorityFeeIx, simulationComputeLimitIx, ...params.ixs],
+      instructions: [...params.ixs, priorityFeeIx, simulationComputeLimitIx],
       payerKey: payer,
     }).compileToV0Message(params.lookupTables ?? []);
-    const simulateTx = new VersionedTransaction(simulateMessageV0);
+    const simulateTx = new web3.VersionedTransaction(simulateMessageV0);
     try {
       simulateTx.serialize();
-    } catch (e: any) {
+    } catch (e) {
       if (e instanceof RangeError) {
         throw new Error(
-          "Transaction failed to serialize: Transaction too large"
+          'Transaction failed to serialize: Transaction too large'
         );
       }
       throw e;
     }
     const simulationResult = await params.connection.simulateTransaction(
       simulateTx,
-      {
-        commitment: "processed",
-        sigVerify: false,
-      }
+      { commitment: 'processed', sigVerify: false }
     );
 
     const simulationUnitsConsumed = simulationResult.value.unitsConsumed!;
-    const computeLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
+    const computeLimitIx = web3.ComputeBudgetProgram.setComputeUnitLimit({
       units: Math.floor(
         simulationUnitsConsumed * (params.computeUnitLimitMultiple ?? 1)
       ),
     });
-    const messageV0 = new TransactionMessage({
+    const messageV0 = new web3.TransactionMessage({
       recentBlockhash,
-      instructions: [priorityFeeIx, computeLimitIx, ...params.ixs],
+      instructions: [...params.ixs, priorityFeeIx, computeLimitIx],
       payerKey: payer,
     }).compileToV0Message(params.lookupTables ?? []);
-    const tx = new VersionedTransaction(messageV0);
+    const tx = new web3.VersionedTransaction(messageV0);
     tx.sign(params.signers ?? []);
     return tx;
   }

@@ -7,9 +7,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { SLOT_HASHES_SYSVAR_ID } from "../constants.js";
-import * as anchor from "@coral-xyz/anchor-30";
-import bs58 from "bs58";
+import { SPL_SYSVAR_SLOT_HASHES_ID } from '../constants.js';
+import { BN } from '@coral-xyz/anchor-31';
+import bs58 from 'bs58';
 /**
  * Abstraction around the SysvarS1otHashes111111111111111111111111111 sysvar
  * This sysvar is used to store the recent slot hashes
@@ -26,27 +26,29 @@ export class RecentSlotHashes {
      */
     static fetchLatest(connection) {
         return __awaiter(this, void 0, void 0, function* () {
-            const accountInfo = yield connection.getAccountInfo(SLOT_HASHES_SYSVAR_ID, {
-                commitment: "confirmed",
+            const defaultHash = bs58.encode(Array(32).fill(0));
+            const accountInfo = yield connection.getAccountInfo(SPL_SYSVAR_SLOT_HASHES_ID, {
+                commitment: 'finalized',
                 dataSlice: { length: 40, offset: 8 },
             });
             if (!accountInfo) {
-                throw new Error("Failed to get account info");
+                return [new BN(0), defaultHash];
             }
             const buffer = accountInfo.data;
             const slotNumber = buffer.readBigUInt64LE(0);
             const encoded = bs58.encode(Uint8Array.prototype.slice.call(buffer, 8));
-            return [new anchor.BN(slotNumber.toString()), encoded];
+            return [new BN(slotNumber.toString()), encoded];
         });
     }
     static fetchLatestNSlothashes(connection, n) {
         return __awaiter(this, void 0, void 0, function* () {
-            const accountInfo = yield connection.getAccountInfo(SLOT_HASHES_SYSVAR_ID, {
-                commitment: "confirmed",
+            const defaultHash = bs58.encode(Array(32).fill(0));
+            const accountInfo = yield connection.getAccountInfo(SPL_SYSVAR_SLOT_HASHES_ID, {
+                commitment: 'finalized',
                 dataSlice: { length: 40 * Math.floor(n), offset: 8 },
             });
             if (!accountInfo) {
-                throw new Error("Failed to get account info");
+                return Array.from({ length: n }, () => [new BN(0), defaultHash]);
             }
             const out = [];
             const buffer = accountInfo.data;
@@ -55,7 +57,7 @@ export class RecentSlotHashes {
                 const hashStart = i * 40 + 8;
                 const hashEnd = hashStart + 32;
                 const encoded = bs58.encode(Uint8Array.prototype.slice.call(buffer, hashStart, hashEnd));
-                out.push([new anchor.BN(slotNumber.toString()), encoded]);
+                out.push([new BN(slotNumber.toString()), encoded]);
             }
             return out;
         });

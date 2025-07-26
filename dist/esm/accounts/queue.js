@@ -7,85 +7,135 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { Gateway } from "../oracle-interfaces/gateway.js";
-import { isMainnetConnection, ON_DEMAND_DEVNET_PID, ON_DEMAND_MAINNET_PID, } from "../utils";
-import * as spl from "./../utils/index.js";
-import { Permission } from "./permission.js";
-import { State } from "./state.js";
-import * as anchor from "@coral-xyz/anchor-30";
-import { BorshAccountsCoder, utils } from "@coral-xyz/anchor-30";
-import { AddressLookupTableProgram, Keypair, PublicKey, SystemProgram, } from "@solana/web3.js";
-function withTimeout(promise, timeoutMs) {
-    // Create a timeout promise that resolves to null after timeoutMs milliseconds
-    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, timeoutMs, null));
-    // Race the timeout promise against the original promise
-    return Promise.race([promise, timeoutPromise]);
-}
+import { SOL_NATIVE_MINT, SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID, SPL_TOKEN_PROGRAM_ID, } from '../constants.js';
+import { Secp256k1InstructionUtils } from '../instruction-utils/Secp256k1InstructionUtils.js';
+import { Gateway } from '../oracle-interfaces/gateway.js';
+import { getAssociatedTokenAddress, getNodePayer } from '../utils/index.js';
+import { getLutKey, getLutSigner } from '../utils/lookupTable.js';
+import { Oracle } from './oracle.js';
+import { Permission } from './permission.js';
+import { State } from './state.js';
+import { BN, web3 } from '@coral-xyz/anchor-31';
+import { AsyncUtils, toUtf8 } from '@switchboard-xyz/common';
+import { Buffer } from 'buffer';
 /**
- *  Removes trailing null bytes from a string.
+ * Queue account management for Switchboard On-Demand
  *
- *  @param input The input string.
- *  @returns The input string with trailing null bytes removed.
- */
-function removeTrailingNullBytes(input) {
-    // Regular expression to match trailing null bytes
-    const trailingNullBytesRegex = /\x00+$/;
-    // Remove trailing null bytes using the replace() method
-    return input.replace(trailingNullBytesRegex, "");
-}
-function runWithTimeout(task, timeoutMs) {
-    return new Promise((resolve, reject) => {
-        // Set up the timeout
-        const timer = setTimeout(() => {
-            resolve("timeout");
-        }, timeoutMs);
-        task.then((result) => {
-            clearTimeout(timer);
-            resolve(result);
-        }, (error) => {
-            clearTimeout(timer);
-            reject(error);
-        });
-    });
-}
-/**
- *  Abstraction around the Switchboard-On-Demand Queue account
+ * The Queue class is the primary interface for interacting with oracle operators
+ * in the Switchboard network. It manages:
  *
- *  This account is used to store the queue data for a given feed.
+ * - Oracle operator authorization and verification
+ * - Bundle fetching and signature verification
+ * - Address lookup table management
+ * - Gateway interactions for data retrieval
+ *
+ * ## Key Features
+ *
+ * - **Oracle Management**: Track and verify authorized oracle signers
+ * - **Bundle Operations**: Fetch signed data bundles from oracle operators
+ * - **LUT Optimization**: Automatic address lookup table management
+ * - **Network Detection**: Automatic mainnet/devnet queue selection
+ *
+ * @example
+ * ```typescript
+ * // Load the default queue for your network
+ * const queue = await Queue.loadDefault(program);
+ *
+ * // Fetch a bundle for specific feeds
+ * const [sigVerifyIx, bundle] = await queue.fetchUpdateBundleIx(
+ *   gateway,
+ *   crossbar,
+ *   ['0x1234...', '0x5678...'] // Feed hashes
+ * );
+ * ```
+ *
+ * @class Queue
  */
 export class Queue {
+    /**
+     * Loads the default queue for the current network
+     *
+     * Automatically detects whether you're on mainnet or devnet and loads
+     * the appropriate default queue. This is the recommended way to get
+     * started with Switchboard On-Demand.
+     *
+     * @param {Program} program - Anchor program instance
+     * @returns {Promise<Queue>} The default queue for your network
+     *
+     * @example
+     * ```typescript
+     * const queue = await Queue.loadDefault(program);
+     * console.log('Using queue:', queue.pubkey.toBase58());
+     * ```
+     */
+    static loadDefault(program) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const queue = new Queue(program, Queue.DEFAULT_MAINNET_KEY);
+                yield queue.loadData();
+                return queue;
+            }
+            catch (_a) {
+                // do nothing
+            }
+            const queue = new Queue(program, Queue.DEFAULT_DEVNET_KEY);
+            return queue;
+        });
+    }
+    /**
+     * Fetches a gateway URL from the Crossbar network
+     *
+     * The gateway is the interface to oracle operators. This method
+     * automatically detects your network and returns an appropriate
+     * gateway for fetching oracle data.
+     *
+     * @param {CrossbarClient} crossbar - Crossbar client instance
+     * @returns {Promise<Gateway>} Gateway instance for oracle communication
+     *
+     * @example
+     * ```typescript
+     * const crossbar = CrossbarClient.default();
+     * const gateway = await queue.fetchGatewayFromCrossbar(crossbar);
+     * ```
+     */
+    fetchGatewayFromCrossbar(crossbar) {
+        return __awaiter(this, void 0, void 0, function* () {
+            let network = 'mainnet';
+            try {
+                const queue = new Queue(this.program, Queue.DEFAULT_MAINNET_KEY);
+                yield queue.loadData();
+            }
+            catch (_a) {
+                network = 'devnet';
+            }
+            const gatewayUrl = (yield crossbar.fetchGateways(network))[0];
+            const gateway = new Gateway(this.program, gatewayUrl);
+            return gateway;
+        });
+    }
+    /**
+     * Creates a new queue account
+     *
+     * @param {Program} program - Anchor program instance
+     * @param {Object} params - Queue configuration parameters
+     * @returns {Promise<[Queue, web3.Keypair, web3.TransactionInstruction]>}
+     *          Tuple of [Queue instance, keypair, creation instruction]
+     */
     static createIx(program, params) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, _b, _c, _d, _e, _f, _g;
-            const stateKey = State.keyFromSeed(program);
-            const state = yield State.loadData(program);
-            const queue = Keypair.generate();
+            const queue = web3.Keypair.generate();
             const allowAuthorityOverrideAfter = (_a = params.allowAuthorityOverrideAfter) !== null && _a !== void 0 ? _a : 60 * 60;
             const requireAuthorityHeartbeatPermission = (_b = params.requireAuthorityHeartbeatPermission) !== null && _b !== void 0 ? _b : true;
             const requireUsagePermission = (_c = params.requireUsagePermission) !== null && _c !== void 0 ? _c : false;
             const maxQuoteVerificationAge = (_d = params.maxQuoteVerificationAge) !== null && _d !== void 0 ? _d : 60 * 60 * 24 * 7;
             const reward = (_e = params.reward) !== null && _e !== void 0 ? _e : 1000000;
             const nodeTimeout = (_f = params.nodeTimeout) !== null && _f !== void 0 ? _f : 300;
-            const payer = program.provider.wallet.payer;
+            const payer = getNodePayer(program);
             // Prepare accounts for the transaction
-            const lutSigner = (yield PublicKey.findProgramAddress([Buffer.from("LutSigner"), queue.publicKey.toBuffer()], program.programId))[0];
-            const [delegationGroup] = yield PublicKey.findProgramAddress([
-                Buffer.from("Group"),
-                stateKey.toBuffer(),
-                state.stakePool.toBuffer(),
-                queue.publicKey.toBuffer(),
-            ], state.stakeProgram);
-            const recentSlot = (_g = params.lutSlot) !== null && _g !== void 0 ? _g : (yield program.provider.connection.getSlot("finalized"));
-            const [_, lut] = AddressLookupTableProgram.createLookupTable({
-                authority: lutSigner,
-                payer: payer.publicKey,
-                recentSlot,
-            });
-            let stakePool = state.stakePool;
-            if (stakePool.equals(PublicKey.default)) {
-                stakePool = payer.publicKey;
-            }
-            const queueAccount = new Queue(program, queue.publicKey);
+            const lutSigner = getLutSigner(program.programId, queue.publicKey);
+            const recentSlot = (_g = params.lutSlot) !== null && _g !== void 0 ? _g : (yield program.provider.connection.getSlot('finalized'));
+            const lutKey = getLutKey(lutSigner, recentSlot);
             const ix = yield program.instruction.queueInit({
                 allowAuthorityOverrideAfter,
                 requireAuthorityHeartbeatPermission,
@@ -93,24 +143,21 @@ export class Queue {
                 maxQuoteVerificationAge,
                 reward,
                 nodeTimeout,
-                recentSlot: new anchor.BN(recentSlot),
+                recentSlot: new BN(recentSlot),
             }, {
                 accounts: {
                     queue: queue.publicKey,
-                    queueEscrow: yield spl.getAssociatedTokenAddress(spl.NATIVE_MINT, queue.publicKey),
+                    queueEscrow: yield getAssociatedTokenAddress(SOL_NATIVE_MINT, queue.publicKey),
                     authority: payer.publicKey,
                     payer: payer.publicKey,
-                    systemProgram: SystemProgram.programId,
-                    tokenProgram: spl.TOKEN_PROGRAM_ID,
-                    nativeMint: spl.NATIVE_MINT,
+                    systemProgram: web3.SystemProgram.programId,
+                    tokenProgram: SPL_TOKEN_PROGRAM_ID,
+                    nativeMint: SOL_NATIVE_MINT,
                     programState: State.keyFromSeed(program),
-                    lutSigner: yield queueAccount.lutSigner(),
-                    lut: yield queueAccount.lutKey(recentSlot),
-                    addressLookupTableProgram: AddressLookupTableProgram.programId,
-                    delegationGroup,
-                    stakeProgram: state.stakeProgram,
-                    stakePool: stakePool,
-                    associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+                    lutSigner: lutSigner,
+                    lut: lutKey,
+                    addressLookupTableProgram: web3.AddressLookupTableProgram.programId,
+                    associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
                 },
                 signers: [payer, queue],
             });
@@ -126,36 +173,19 @@ export class Queue {
     static createIxSVM(program, params) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, _b, _c, _d, _e, _f, _g;
-            const stateKey = State.keyFromSeed(program);
-            const state = yield State.loadData(program);
             // Generate the queue PDA for the given source queue key
-            const [queue] = yield PublicKey.findProgramAddress([Buffer.from("Queue"), params.sourceQueueKey.toBuffer()], program.programId);
+            const [queue] = web3.PublicKey.findProgramAddressSync([Buffer.from('Queue'), params.sourceQueueKey.toBuffer()], program.programId);
             const allowAuthorityOverrideAfter = (_a = params.allowAuthorityOverrideAfter) !== null && _a !== void 0 ? _a : 60 * 60;
             const requireAuthorityHeartbeatPermission = (_b = params.requireAuthorityHeartbeatPermission) !== null && _b !== void 0 ? _b : true;
             const requireUsagePermission = (_c = params.requireUsagePermission) !== null && _c !== void 0 ? _c : false;
             const maxQuoteVerificationAge = (_d = params.maxQuoteVerificationAge) !== null && _d !== void 0 ? _d : 60 * 60 * 24 * 7;
             const reward = (_e = params.reward) !== null && _e !== void 0 ? _e : 1000000;
             const nodeTimeout = (_f = params.nodeTimeout) !== null && _f !== void 0 ? _f : 300;
-            const payer = program.provider.wallet.payer;
+            const payer = getNodePayer(program);
             // Prepare accounts for the transaction
-            const lutSigner = (yield PublicKey.findProgramAddress([Buffer.from("LutSigner"), queue.toBuffer()], program.programId))[0];
-            const [delegationGroup] = yield PublicKey.findProgramAddress([
-                Buffer.from("Group"),
-                stateKey.toBuffer(),
-                state.stakePool.toBuffer(),
-                queue.toBuffer(),
-            ], state.stakeProgram);
-            const recentSlot = (_g = params.lutSlot) !== null && _g !== void 0 ? _g : (yield program.provider.connection.getSlot("finalized"));
-            const [_, lut] = AddressLookupTableProgram.createLookupTable({
-                authority: lutSigner,
-                payer: payer.publicKey,
-                recentSlot,
-            });
-            let stakePool = state.stakePool;
-            if (stakePool.equals(PublicKey.default)) {
-                stakePool = payer.publicKey;
-            }
-            const queueAccount = new Queue(program, queue);
+            const lutSigner = getLutSigner(program.programId, queue);
+            const recentSlot = (_g = params.lutSlot) !== null && _g !== void 0 ? _g : (yield program.provider.connection.getSlot('finalized'));
+            const lutKey = getLutKey(lutSigner, recentSlot);
             const ix = program.instruction.queueInitSvm({
                 allowAuthorityOverrideAfter,
                 requireAuthorityHeartbeatPermission,
@@ -163,25 +193,22 @@ export class Queue {
                 maxQuoteVerificationAge,
                 reward,
                 nodeTimeout,
-                recentSlot: new anchor.BN(recentSlot),
+                recentSlot: new BN(recentSlot),
                 sourceQueueKey: params.sourceQueueKey,
             }, {
                 accounts: {
                     queue: queue,
-                    queueEscrow: yield spl.getAssociatedTokenAddress(spl.NATIVE_MINT, queue, true),
+                    queueEscrow: yield getAssociatedTokenAddress(SOL_NATIVE_MINT, queue, true),
                     authority: payer.publicKey,
                     payer: payer.publicKey,
-                    systemProgram: SystemProgram.programId,
-                    tokenProgram: spl.TOKEN_PROGRAM_ID,
-                    nativeMint: spl.NATIVE_MINT,
+                    systemProgram: web3.SystemProgram.programId,
+                    tokenProgram: SPL_TOKEN_PROGRAM_ID,
+                    nativeMint: SOL_NATIVE_MINT,
                     programState: State.keyFromSeed(program),
-                    lutSigner: yield queueAccount.lutSigner(),
-                    lut: yield queueAccount.lutKey(recentSlot),
-                    addressLookupTableProgram: AddressLookupTableProgram.programId,
-                    delegationGroup,
-                    stakeProgram: state.stakeProgram,
-                    stakePool: stakePool,
-                    associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+                    lutSigner: lutSigner,
+                    lut: lutKey,
+                    addressLookupTableProgram: web3.AddressLookupTableProgram.programId,
+                    associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
                 },
                 signers: [payer],
             });
@@ -196,65 +223,18 @@ export class Queue {
     overrideSVM(params) {
         return __awaiter(this, void 0, void 0, function* () {
             const stateKey = State.keyFromSeed(this.program);
-            const state = yield State.loadData(this.program);
-            const programAuthority = state.authority;
             const { authority } = yield this.loadData();
-            if (!authority.equals(programAuthority)) {
-                throw new Error("Override failed: Invalid authority");
-            }
             const ix = this.program.instruction.queueOverrideSvm({
                 secp256K1Signer: Array.from(params.secp256k1Signer),
-                maxQuoteVerificationAge: new anchor.BN(params.maxQuoteVerificationAge),
+                maxQuoteVerificationAge: new BN(params.maxQuoteVerificationAge),
                 mrEnclave: params.mrEnclave,
-                slot: new anchor.BN(params.slot),
+                slot: new BN(params.slot),
             }, {
                 accounts: {
                     queue: this.pubkey,
                     oracle: params.oracle,
                     authority,
                     state: stateKey,
-                },
-            });
-            return ix;
-        });
-    }
-    initDelegationGroupIx(params) {
-        return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b;
-            const queueAccount = new Queue(this.program, this.pubkey);
-            const lutSlot = (_a = params.lutSlot) !== null && _a !== void 0 ? _a : (yield this.loadData()).lutSlot;
-            const payer = this.program.provider.wallet.payer;
-            const stateKey = State.keyFromSeed(this.program);
-            const state = yield State.loadData(this.program);
-            const stakePool = (_b = params.overrideStakePool) !== null && _b !== void 0 ? _b : state.stakePool;
-            const [delegationGroup] = yield PublicKey.findProgramAddress([
-                Buffer.from("Group"),
-                stateKey.toBuffer(),
-                stakePool.toBuffer(),
-                this.pubkey.toBuffer(),
-            ], state.stakeProgram);
-            const isMainnet = isMainnetConnection(this.program.provider.connection);
-            let pid = ON_DEMAND_MAINNET_PID;
-            if (!isMainnet) {
-                pid = ON_DEMAND_DEVNET_PID;
-            }
-            const [queueEscrowSigner] = yield PublicKey.findProgramAddress([Buffer.from("Signer"), this.pubkey.toBuffer()], pid);
-            const ix = yield this.program.instruction.queueInitDelegationGroup({}, {
-                accounts: {
-                    queue: this.pubkey,
-                    queueEscrow: yield spl.getAssociatedTokenAddress(spl.NATIVE_MINT, this.pubkey),
-                    queueEscrowSigner,
-                    payer: payer.publicKey,
-                    systemProgram: SystemProgram.programId,
-                    tokenProgram: spl.TOKEN_PROGRAM_ID,
-                    nativeMint: spl.NATIVE_MINT,
-                    programState: stateKey,
-                    lutSigner: yield this.lutSigner(),
-                    lut: yield this.lutKey(lutSlot),
-                    addressLookupTableProgram: AddressLookupTableProgram.programId,
-                    delegationGroup: delegationGroup,
-                    stakeProgram: state.stakeProgram,
-                    stakePool: stakePool,
                 },
             });
             return ix;
@@ -289,6 +269,17 @@ export class Queue {
             return queueAccount.fetchSignaturesBatch(params);
         });
     }
+    static fetchSignaturesConsensus(program, params) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const queueAccount = new Queue(program, params.queue);
+            return queueAccount.fetchSignaturesConsensus({
+                gateway: params.gateway,
+                feedConfigs: params.feedConfigs,
+                useTimestamp: params.useTimestamp,
+                numSignatures: params.numSignatures,
+            });
+        });
+    }
     /**
      * @deprecated
      * Deprecated. Use {@linkcode @switchboard-xyz/common#FeedHash.compute} instead.
@@ -297,7 +288,7 @@ export class Queue {
         return __awaiter(this, void 0, void 0, function* () {
             const queueAccount = new Queue(program, params.queue);
             const oracleSigs = yield queueAccount.fetchSignatures(params);
-            return Buffer.from(oracleSigs[0].feed_hash, "hex");
+            return Buffer.from(oracleSigs[0].feed_hash, 'hex');
         });
     }
     /**
@@ -309,8 +300,11 @@ export class Queue {
     constructor(program, pubkey) {
         this.program = program;
         this.pubkey = pubkey;
+        this.data = null;
+        this.lookupTable = null;
+        this.lookupTableRefreshTime = 0;
         if (this.pubkey === undefined) {
-            throw new Error("NoPubkeyProvided");
+            throw new Error('NoPubkeyProvided');
         }
     }
     /**
@@ -320,9 +314,8 @@ export class Queue {
      */
     fetchOracleKeys() {
         return __awaiter(this, void 0, void 0, function* () {
-            const program = this.program;
-            const queueData = (yield program.account["queueAccountData"].fetch(this.pubkey));
-            const oracles = queueData.oracleKeys.slice(0, queueData.oracleKeysLen);
+            const data = yield this.loadData();
+            const oracles = data.oracleKeys.slice(0, data.oracleKeysLen);
             return oracles;
         });
     }
@@ -333,32 +326,31 @@ export class Queue {
      */
     fetchAllGateways() {
         return __awaiter(this, void 0, void 0, function* () {
-            const queue = this.pubkey;
             const program = this.program;
-            const coder = new BorshAccountsCoder(program.idl);
             const oracles = yield this.fetchOracleKeys();
-            const oracleAccounts = yield utils.rpc.getMultipleAccounts(program.provider.connection, oracles);
+            const oracleAccounts = yield Oracle.loadMany(program, oracles);
             const gatewayUris = oracleAccounts
-                .map((x) => coder.decode("oracleAccountData", x.account.data))
-                .map((x) => String.fromCharCode(...x.gatewayUri))
-                .map((x) => removeTrailingNullBytes(x))
-                .filter((x) => x.length > 0)
-                .filter((x) => !x.includes("infstones"));
+                .map(oracleAccount => oracleAccount ? toUtf8(oracleAccount.gatewayUri) : '')
+                .filter(gatewayUri => gatewayUri.length > 0)
+                .filter(gatewayUri => !gatewayUri.includes('infstones'));
             const tests = [];
             for (const i in gatewayUris) {
                 const gw = new Gateway(program, gatewayUris[i], oracles[i]);
-                tests.push(gw.test());
+                tests.push({ gateway: gw, promise: gw.test() });
             }
             let gateways = [];
-            for (let i = 0; i < tests.length; i++) {
+            for (const test of tests) {
                 try {
-                    const isGood = yield withTimeout(tests[i], 2000);
-                    if (isGood) {
-                        gateways.push(new Gateway(program, gatewayUris[i], oracles[i]));
-                    }
+                    const { gateway, promise } = test;
+                    // Test gateways to see if they are good. Timeout after 2 seconds.
+                    const isGood = yield AsyncUtils.promiseWithTimeout(2000, promise);
+                    if (!isGood)
+                        continue;
+                    // If the gateway is good, add it to the list
+                    gateways.push(gateway);
                 }
                 catch (e) {
-                    console.log("Timeout", e);
+                    console.log('Timeout', e);
                 }
             }
             gateways = gateways.sort(() => Math.random() - 0.5);
@@ -366,15 +358,20 @@ export class Queue {
         });
     }
     /**
-     *  Loads the queue data from on chain and returns a random gateway.
-     *  @returns A promise that resolves to a gateway interface
+     * Fetches a gateway interface for interacting with oracle nodes.
+     *
+     * @param gatewayUrl - Optional URL of a specific gateway to use. If not provided,
+     *                     a random gateway will be selected from the queue's available gateways.
+     * @returns Gateway - A Gateway instance for making oracle requests
+     * @throws {Error} If no gateways are available on the queue when selecting randomly
      */
-    fetchGateway() {
+    fetchGateway(gatewayUrl) {
         return __awaiter(this, void 0, void 0, function* () {
+            if (gatewayUrl)
+                return new Gateway(this.program, gatewayUrl);
             const gateways = yield this.fetchAllGateways();
-            if (gateways.length === 0) {
-                throw new Error("NoGatewayAvailable");
-            }
+            if (gateways.length === 0)
+                throw new Error('NoGatewayAvailable');
             return gateways[Math.floor(Math.random() * gateways.length)];
         });
     }
@@ -394,33 +391,57 @@ export class Queue {
      */
     fetchSignatures(params) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a;
-            let gateway = new Gateway(this.program, (_a = params.gateway) !== null && _a !== void 0 ? _a : "");
-            if (params.gateway === undefined) {
-                gateway = yield this.fetchGateway();
-            }
-            return yield gateway.fetchSignatures(params);
+            const gateway = yield this.fetchGateway(params.gateway);
+            return yield gateway.fetchSignatures({
+                recentHash: params.recentHash,
+                jobs: params.jobs,
+                numSignatures: params.numSignatures,
+                maxVariance: params.maxVariance,
+                minResponses: params.minResponses,
+                useTimestamp: params.useTimestamp,
+            });
         });
     }
     fetchSignaturesMulti(params) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a;
-            let gateway = new Gateway(this.program, (_a = params.gateway) !== null && _a !== void 0 ? _a : "");
-            if (params.gateway === undefined) {
-                gateway = yield this.fetchGateway();
-            }
-            return yield gateway.fetchSignaturesMulti(params);
+            const gateway = yield this.fetchGateway(params.gateway);
+            return yield gateway.fetchSignaturesMulti({
+                recentHash: params.recentHash,
+                feedConfigs: params.feedConfigs,
+                numSignatures: params.numSignatures,
+                useTimestamp: params.useTimestamp,
+            });
+        });
+    }
+    fetchSignaturesConsensus(params) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const gateway = yield this.fetchGateway(params.gateway);
+            return yield gateway.fetchSignaturesConsensus({
+                feedConfigs: params.feedConfigs,
+                useTimestamp: params.useTimestamp,
+                numSignatures: params.numSignatures,
+            });
         });
     }
     fetchSignaturesBatch(params) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a;
-            let gateway = new Gateway(this.program, (_a = params.gateway) !== null && _a !== void 0 ? _a : "");
-            if (params.gateway === undefined) {
-                gateway = yield this.fetchGateway();
-            }
-            return yield gateway.fetchSignaturesBatch(params);
+            const gateway = yield this.fetchGateway(params.gateway);
+            return yield gateway.fetchSignaturesBatch({
+                recentHash: params.recentHash,
+                feedConfigs: params.feedConfigs,
+                numSignatures: params.numSignatures,
+                useTimestamp: params.useTimestamp,
+            });
         });
+    }
+    /**
+     *  Loads the queue data for this {@linkcode Queue} account from on chain.
+     *
+     *  @returns A promise that resolves to the queue data.
+     *  @throws if the queue account does not exist.
+     */
+    static loadData(program, pubkey) {
+        return program.account['queueAccountData'].fetch(pubkey);
     }
     /**
      *  Loads the queue data for this {@linkcode Queue} account from on chain.
@@ -430,7 +451,10 @@ export class Queue {
      */
     loadData() {
         return __awaiter(this, void 0, void 0, function* () {
-            return yield this.program.account["queueAccountData"].fetch(this.pubkey);
+            if (this.data === null || this.data === undefined) {
+                this.data = yield Queue.loadData(this.program, this.pubkey);
+            }
+            return this.data;
         });
     }
     /**
@@ -497,10 +521,7 @@ export class Queue {
             var _a, _b;
             const data = yield this.loadData();
             const stateKey = State.keyFromSeed(this.program);
-            let nodeTimeout = null;
-            if (params.nodeTimeout !== undefined) {
-                nodeTimeout = new anchor.BN(params.nodeTimeout);
-            }
+            const nodeTimeout = params.nodeTimeout ? new BN(params.nodeTimeout) : null;
             const ix = yield this.program.instruction.queueSetConfigs({
                 authority: (_a = params.authority) !== null && _a !== void 0 ? _a : null,
                 reward: (_b = params.reward) !== null && _b !== void 0 ? _b : null,
@@ -513,6 +534,56 @@ export class Queue {
                 },
             });
             return ix;
+        });
+    }
+    setNcnIx(params) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const data = yield this.loadData();
+            const authority = data.authority;
+            const state = State.keyFromSeed(this.program);
+            return this.program.instruction.queueSetNcn({}, {
+                accounts: {
+                    queue: this.pubkey,
+                    authority,
+                    state,
+                    ncn: params.ncn,
+                },
+            });
+        });
+    }
+    setVaultIx(params) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const data = yield this.loadData();
+            const authority = data.authority;
+            const state = State.keyFromSeed(this.program);
+            const ncn = data.ncn;
+            return this.program.instruction.queueSetVault({
+                enable: params.enable,
+            }, {
+                accounts: {
+                    queue: this.pubkey,
+                    authority,
+                    state,
+                    ncn,
+                    vault: params.vault,
+                },
+            });
+        });
+    }
+    allowSubsidyIx(params) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const data = yield this.loadData();
+            const authority = data.authority;
+            const state = State.keyFromSeed(this.program);
+            return this.program.instruction.queueAllowSubsidies({
+                allowSubsidies: params.enable,
+            }, {
+                accounts: {
+                    queue: this.pubkey,
+                    authority,
+                    state,
+                },
+            });
         });
     }
     /**
@@ -544,9 +615,7 @@ export class Queue {
             const activeEnclaves = mrEnclaves.slice(0, mrEnclavesLen);
             const ixs = [];
             for (const mrEnclave of activeEnclaves) {
-                ixs.push(yield this.rmMrEnclaveIx({
-                    mrEnclave,
-                }));
+                ixs.push(yield this.rmMrEnclaveIx({ mrEnclave }));
             }
             return ixs;
         });
@@ -558,15 +627,12 @@ export class Queue {
      */
     fetchFreshOracle() {
         return __awaiter(this, void 0, void 0, function* () {
-            const coder = new BorshAccountsCoder(this.program.idl);
             const now = Math.floor(+new Date() / 1000);
             const oracles = yield this.fetchOracleKeys();
-            const oracleAccounts = yield utils.rpc.getMultipleAccounts(this.program.provider.connection, oracles);
+            const oracleAccounts = yield Oracle.loadMany(this.program, oracles);
             const oracleUris = oracleAccounts
-                .map((x) => coder.decode("oracleAccountData", x.account.data))
-                .map((x) => String.fromCharCode(...x.gatewayUri))
-                .map((x) => removeTrailingNullBytes(x))
-                .filter((x) => x.length > 0);
+                .map(data => toUtf8(data.gatewayUri))
+                .filter(gatewayUri => gatewayUri.length);
             const tests = [];
             for (const i in oracleUris) {
                 const gw = new Gateway(this.program, oracleUris[i], oracles[i]);
@@ -575,22 +641,21 @@ export class Queue {
             const zip = [];
             for (let i = 0; i < oracles.length; i++) {
                 try {
-                    const isGood = yield withTimeout(tests[i], 2000);
-                    if (!isGood) {
+                    // Test gateways to see if they are good. Timeout after 2 seconds.
+                    const isGood = AsyncUtils.promiseWithTimeout(2000, tests[i]);
+                    if (!isGood)
                         continue;
-                    }
                 }
                 catch (e) {
-                    console.log("Gateway Timeout", e);
+                    console.log('Gateway Timeout', e);
                 }
-                zip.push({
-                    data: coder.decode("oracleAccountData", oracleAccounts[i].account.data),
-                    key: oracles[i],
-                });
+                zip.push({ data: oracleAccounts[i], key: oracles[i] });
             }
             const validOracles = zip
-                .filter((x) => x.data.enclave.verificationStatus === 4) // value 4 is for verified
-                .filter((x) => x.data.enclave.validUntil > now + 3600); // valid for 1 hour at least
+                .filter(x => x.data.enclave.verificationStatus === 4) // value 4 is for verified
+                .filter(x => x.data.enclave.validUntil.gt(new BN(now + 3600))); // valid for 1 hour at least
+            if (validOracles.length === 0)
+                throw new Error('NoValidOracles');
             const chosen = validOracles[Math.floor(Math.random() * validOracles.length)];
             return chosen.key;
         });
@@ -609,32 +674,120 @@ export class Queue {
      * @returns Queue PDA Pubkey
      */
     static queuePDA(program, pubkey) {
-        const [queuePDA] = PublicKey.findProgramAddressSync([Buffer.from("Queue"), pubkey.toBuffer()], program.programId);
+        const [queuePDA] = web3.PublicKey.findProgramAddressSync([Buffer.from('Queue'), pubkey.toBuffer()], program.programId);
         return queuePDA;
     }
-    lutSigner() {
-        return __awaiter(this, void 0, void 0, function* () {
-            return (yield PublicKey.findProgramAddress([Buffer.from("LutSigner"), this.pubkey.toBuffer()], this.program.programId))[0];
-        });
-    }
-    lutKey(lutSlot) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const lutSigner = yield this.lutSigner();
-            const [_, lutKey] = yield AddressLookupTableProgram.createLookupTable({
-                authority: lutSigner,
-                payer: PublicKey.default,
-                recentSlot: lutSlot,
-            });
-            return lutKey;
-        });
-    }
+    // auto refresh lookup table if it is older than 5 minutes
     loadLookupTable() {
         return __awaiter(this, void 0, void 0, function* () {
+            const now = Date.now();
+            if (this.lookupTable && now - this.lookupTableRefreshTime < 5 * 60 * 1000) {
+                return this.lookupTable;
+            }
             const data = yield this.loadData();
-            const lutKey = yield this.lutKey(data.lutSlot);
+            const lutSigner = getLutSigner(this.program.programId, this.pubkey);
+            const lutKey = getLutKey(lutSigner, data.lutSlot);
             const accnt = yield this.program.provider.connection.getAddressLookupTable(lutKey);
+            this.lookupTable = accnt.value;
             return accnt.value;
         });
     }
+    /**
+     * Fetches oracle bundle and creates verification instruction
+     *
+     * This is the primary method for fetching oracle data in the bundle approach.
+     * It retrieves signed price data from oracle operators and creates the
+     * instruction to verify signatures on-chain.
+     *
+     * @param {Gateway} gateway - Gateway instance for oracle communication
+     * @param {CrossbarClient} crossbar - Crossbar client for data routing
+     * @param {string[]} feedHashes - Array of feed hashes to fetch (hex strings)
+     * @param {number} numSignatures - Number of oracle signatures required (default: 1)
+     * @returns {Promise<[web3.TransactionInstruction, Buffer]>}
+     *          Tuple of [signature verification instruction, bundle data]
+     *
+     * @example
+     * ```typescript
+     * // Fetch prices for BTC and ETH
+     * const [sigVerifyIx, bundle] = await queue.fetchUpdateBundleIx(
+     *   gateway,
+     *   crossbar,
+     *   ['0x1234...', '0x5678...'], // Feed hashes
+     *   3 // Require 3 oracle signatures
+     * );
+     *
+     * // Use in your transaction
+     * const tx = await asV0Tx({
+     *   connection,
+     *   ixs: [sigVerifyIx, yourProgramIx],
+     *   signers: [payer],
+     * });
+     * ```
+     */
+    fetchUpdateBundleIx(gateway_1, crossbar_1, feedHashes_1) {
+        return __awaiter(this, arguments, void 0, function* (gateway, crossbar, feedHashes, numSignatures = 1) {
+            const response = yield gateway.fetchUpdateBundle(crossbar, feedHashes, numSignatures);
+            // Check if oracle_responses is empty
+            if (!response.oracle_responses || response.oracle_responses.length === 0) {
+                throw new Error('No oracle responses available for creating secp256k1 signatures');
+            }
+            const secpSignatures = response.oracle_responses.map(oracleResponse => {
+                return {
+                    ethAddress: Buffer.from(oracleResponse.eth_address, 'hex'),
+                    signature: Buffer.from(oracleResponse.signature, 'base64'),
+                    message: Buffer.from(oracleResponse.checksum, 'base64'),
+                    recoveryId: oracleResponse.recovery_id,
+                };
+            });
+            const secpInstruction = Secp256k1InstructionUtils.buildSecp256k1Instruction(secpSignatures, 0);
+            // Prepare the instruction data for the `pullFeedSubmitResponseManySecp` instruction.
+            const data = {
+                slotLower: Number(response.slot) & 0xff,
+                feedInfos: response.median_responses.map(({ value, feed_hash, num_oracles }) => {
+                    return {
+                        value: new BN(value),
+                        checksum: Buffer.from(feed_hash, 'hex'),
+                        numOracles: num_oracles,
+                    };
+                }),
+            };
+            // // Prepare the accounts for the `pullFeedSubmitResponseManySecp` instruction.
+            // const accounts = {
+            // queue: queue!,
+            // recentSlothashes: SPL_SYSVAR_SLOT_HASHES_ID,
+            // ixSysvar: SPL_SYSVAR_INSTRUCTIONS_ID,
+            // };
+            //
+            // const verifyIx = this.program.instruction.pullFeedVerifyResponse(
+            // instructionData,
+            // {
+            // accounts,
+            // }
+            // );
+            // Load the lookup tables for the feeds and oracles.
+            return [secpInstruction, serializeBundleData(data)];
+        });
+    }
+}
+Queue.DEFAULT_DEVNET_KEY = new web3.PublicKey('EYiAmGSdsQTuCw413V5BzaruWuCCSDgTPtBGvLkXHbe7');
+Queue.DEFAULT_MAINNET_KEY = new web3.PublicKey('A43DyUGA7s8eXPxqEjJY6EBu1KKbNgfxF8h17VAHn13w');
+export function serializeBundleData(data) {
+    const buffers = [];
+    // slotLower: 1 byte
+    const slotBuffer = Buffer.alloc(1);
+    slotBuffer.writeUInt8(data.slotLower);
+    buffers.push(slotBuffer);
+    for (const feed of data.feedInfos) {
+        // checksum: 32 bytes
+        if (feed.checksum.length !== 32) {
+            throw new Error('Checksum must be 32 bytes');
+        }
+        buffers.push(feed.checksum);
+        // value: 16-byte little-endian i128
+        const valueBuf = feed.value.toTwos(128).toArrayLike(Buffer, 'le', 16);
+        buffers.push(valueBuf);
+        buffers.push(Buffer.from([feed.numOracles]));
+    }
+    return Buffer.concat(buffers);
 }
 //# sourceMappingURL=queue.js.map

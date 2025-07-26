@@ -7,18 +7,21 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { SLOT_HASHES_SYSVAR_ID } from "../constants.js";
-import { Gateway } from "../oracle-interfaces/gateway.js";
-import { InstructionUtils } from "./../instruction-utils/InstructionUtils.js";
-import * as spl from "./../utils/index.js";
-import { Oracle } from "./oracle.js";
-import { Queue } from "./queue.js";
-import { State } from "./state.js";
-import * as anchor from "@coral-xyz/anchor-30";
-import { AddressLookupTableProgram, ComputeBudgetProgram, Keypair, PublicKey, SystemProgram, } from "@solana/web3.js";
-import { sendTxWithJito } from "@solworks/soltoolkit-sdk/build/modules/TransactionWrapper.js";
-import * as bs58 from "bs58";
-import * as fs from "fs";
+import { SOL_NATIVE_MINT, SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID, SPL_SYSVAR_SLOT_HASHES_ID, SPL_TOKEN_PROGRAM_ID, } from '../constants.js';
+import { InstructionUtils } from '../instruction-utils/InstructionUtils.js';
+import { Gateway } from '../oracle-interfaces/gateway.js';
+import * as spl from '../utils/index.js';
+import { getLutKey, getLutSigner } from '../utils/lookupTable.js';
+import { Oracle } from './oracle.js';
+import { Queue } from './queue.js';
+import { State } from './state.js';
+import { BN, web3 } from '@coral-xyz/anchor-31';
+import bs58 from 'bs58';
+import { Buffer } from 'buffer';
+function isNonSolana(queue) {
+    return (queue.equals(spl.ON_DEMAND_MAINNET_QUEUE_PDA) ||
+        queue.equals(spl.ON_DEMAND_DEVNET_QUEUE_PDA));
+}
 /**
  * Switchboard commit-reveal randomness.
  * This account type controls commit-reveal style randomness employing
@@ -35,11 +38,15 @@ import * as fs from "fs";
  *   protocol failed to auto-prune.
  */
 export class Randomness {
+    static getPayer(program, payer) {
+        var _a;
+        return (_a = payer !== null && payer !== void 0 ? payer : program.provider.publicKey) !== null && _a !== void 0 ? _a : web3.PublicKey.default;
+    }
     /**
      * Constructs a `Randomness` instance.
      *
      * @param {Program} program - The Anchor program instance.
-     * @param {PublicKey} pubkey - The public key of the randomness account.
+     * @param {web3.PublicKey} pubkey - The public key of the randomness account.
      */
     constructor(program, pubkey) {
         this.program = program;
@@ -51,46 +58,44 @@ export class Randomness {
      * @returns {Promise<any>} A promise that resolves to the randomness data.
      * @throws Will throw an error if the randomness account does not exist.
      */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     loadData() {
         return __awaiter(this, void 0, void 0, function* () {
-            return yield this.program.account["randomnessAccountData"].fetch(this.pubkey);
+            return yield this.program.account['randomnessAccountData'].fetch(this.pubkey);
         });
     }
     /**
      * Creates a new `Randomness` account.
      *
      * @param {Program} program - The Anchor program instance.
-     * @param {Keypair} kp - The keypair of the new `Randomness` account.
-     * @param {PublicKey} queue - The queue account to associate with the new `Randomness` account.
-     * @param {PublicKey} [payer_] - The payer for the transaction. If not provided, the default payer from the program provider is used.
-     * @returns {Promise<[Randomness, TransactionInstruction]>} A promise that resolves to a tuple containing the new `Randomness` account and the transaction instruction.
+     * @param {web3.Keypair} kp - The keypair of the new `Randomness` account.
+     * @param {web3.PublicKey} queue - The queue account to associate with the new `Randomness` account.
+     * @param {web3.PublicKey} [payer_] - The payer for the transaction. If not provided, the default payer from the program provider is used.
+     * @returns {Promise<[Randomness, web3.TransactionInstruction]>} A promise that resolves to a tuple containing the new `Randomness` account and the transaction instruction.
      */
     static create(program, kp, queue, payer_) {
         return __awaiter(this, void 0, void 0, function* () {
-            const lutSigner = (yield PublicKey.findProgramAddress([Buffer.from("LutSigner"), kp.publicKey.toBuffer()], program.programId))[0];
-            const recentSlot = yield program.provider.connection.getSlot("finalized");
-            const [_, lut] = AddressLookupTableProgram.createLookupTable({
-                authority: lutSigner,
-                payer: PublicKey.default,
-                recentSlot,
-            });
+            const payer = Randomness.getPayer(program, payer_);
+            const lutSigner = getLutSigner(program.programId, kp.publicKey);
+            const recentSlot = yield program.provider.connection.getSlot('finalized');
+            const lutKey = getLutKey(lutSigner, recentSlot);
             const ix = program.instruction.randomnessInit({
-                recentSlot: new anchor.BN(recentSlot.toString()),
+                recentSlot: new BN(recentSlot.toString()),
             }, {
                 accounts: {
                     randomness: kp.publicKey,
                     queue,
-                    authority: program.provider.publicKey,
-                    payer: program.provider.publicKey,
-                    rewardEscrow: spl.getAssociatedTokenAddressSync(spl.NATIVE_MINT, kp.publicKey),
-                    systemProgram: SystemProgram.programId,
-                    tokenProgram: spl.TOKEN_PROGRAM_ID,
-                    associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
-                    wrappedSolMint: spl.NATIVE_MINT,
+                    authority: payer,
+                    payer: payer,
+                    rewardEscrow: spl.getAssociatedTokenAddressSync(SOL_NATIVE_MINT, kp.publicKey),
+                    systemProgram: web3.SystemProgram.programId,
+                    tokenProgram: SPL_TOKEN_PROGRAM_ID,
+                    associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+                    wrappedSolMint: SOL_NATIVE_MINT,
                     programState: State.keyFromSeed(program),
-                    lutSigner,
-                    lut,
-                    addressLookupTableProgram: AddressLookupTableProgram.programId,
+                    lutSigner: lutSigner,
+                    lut: lutKey,
+                    addressLookupTableProgram: web3.AddressLookupTableProgram.programId,
                 },
             });
             return [new Randomness(program, kp.publicKey), ix];
@@ -105,17 +110,33 @@ export class Randomness {
      * @param {PublicKey} [authority_] - The optional authority public key.
      * @returns {Promise<TransactionInstruction>} A promise that resolves to the transaction instruction.
      */
-    commitIx(queue, authority_) {
+    commitIx(queue, authority_, oracle_) {
         return __awaiter(this, void 0, void 0, function* () {
             const queueAccount = new Queue(this.program, queue);
-            const oracle = yield queueAccount.fetchFreshOracle();
+            let oracle;
+            // If we're on a non-Solana SVM network - we'll need the oracle address as a PDA on the target chain
+            if (oracle_) {
+                oracle = oracle_;
+            }
+            else if (isNonSolana(queue)) {
+                const isMainnet = queue.equals(spl.ON_DEMAND_MAINNET_QUEUE_PDA);
+                const solanaQueue = yield spl.getQueue({
+                    program: this.program,
+                    queueAddress: spl.getDefaultQueueAddress(isMainnet),
+                });
+                const solanaOracle = yield solanaQueue.fetchFreshOracle();
+                [oracle] = web3.PublicKey.findProgramAddressSync([Buffer.from('Oracle'), queue.toBuffer(), solanaOracle.toBuffer()], spl.ON_DEMAND_MAINNET_PID);
+            }
+            else {
+                oracle = yield queueAccount.fetchFreshOracle();
+            }
             const authority = authority_ !== null && authority_ !== void 0 ? authority_ : (yield this.loadData()).authority;
-            const ix = yield this.program.instruction.randomnessCommit({}, {
+            const ix = this.program.instruction.randomnessCommit({}, {
                 accounts: {
                     randomness: this.pubkey,
-                    queue: queue,
-                    oracle: oracle,
-                    recentSlothashes: SLOT_HASHES_SYSVAR_ID,
+                    queue,
+                    oracle,
+                    recentSlothashes: SPL_SYSVAR_SLOT_HASHES_ID,
                     authority,
                 },
             });
@@ -126,40 +147,49 @@ export class Randomness {
      * Generate a randomness `reveal` solana transaction instruction.
      * This will reveal the randomness using the assigned oracle.
      *
-     * @returns {Promise<TransactionInstruction>} A promise that resolves to the transaction instruction.
+     * @returns {Promise<web3.TransactionInstruction>} A promise that resolves to the transaction instruction.
      */
-    revealIx() {
+    revealIx(payer_) {
         return __awaiter(this, void 0, void 0, function* () {
+            const payer = Randomness.getPayer(this.program, payer_);
             const data = yield this.loadData();
-            const oracleKey = data.oracle;
-            const oracle = new Oracle(this.program, oracleKey);
-            const oracleData = yield oracle.loadData();
-            const gatewayUrl = String.fromCharCode(...oracleData.gatewayUri).replace(/\0+$/, "");
+            let oracleData;
+            // if non-Solana SVM network - we'll need to get the solana oracle address from the oracle PDA
+            if (isNonSolana(data.queue)) {
+                const solanaOracle = yield new Oracle(this.program, data.oracle).findSolanaOracleFromPDA();
+                oracleData = solanaOracle.oracleData;
+            }
+            else {
+                const oracle = new Oracle(this.program, data.oracle);
+                oracleData = yield oracle.loadData();
+            }
+            const gatewayUrl = String.fromCharCode(...oracleData.gatewayUri).replace(/\0+$/, '');
             const gateway = new Gateway(this.program, gatewayUrl);
             const gatewayRevealResponse = yield gateway.fetchRandomnessReveal({
                 randomnessAccount: this.pubkey,
                 slothash: bs58.encode(data.seedSlothash),
                 slot: data.seedSlot.toNumber(),
+                rpc: this.program.provider.connection.rpcEndpoint,
             });
-            const stats = PublicKey.findProgramAddressSync([Buffer.from("OracleRandomnessStats"), oracleKey.toBuffer()], this.program.programId)[0];
-            const ix = yield this.program.instruction.randomnessReveal({
-                signature: Buffer.from(gatewayRevealResponse.signature, "base64"),
+            const stats = web3.PublicKey.findProgramAddressSync([Buffer.from('OracleRandomnessStats'), data.oracle.toBuffer()], this.program.programId)[0];
+            const ix = this.program.instruction.randomnessReveal({
+                signature: Buffer.from(gatewayRevealResponse.signature, 'base64'),
                 recoveryId: gatewayRevealResponse.recovery_id,
                 value: gatewayRevealResponse.value,
             }, {
                 accounts: {
                     randomness: this.pubkey,
-                    oracle: oracleKey,
+                    oracle: data.oracle,
                     queue: data.queue,
                     stats,
                     authority: data.authority,
-                    payer: this.program.provider.publicKey,
-                    recentSlothashes: SLOT_HASHES_SYSVAR_ID,
-                    systemProgram: SystemProgram.programId,
-                    rewardEscrow: spl.getAssociatedTokenAddressSync(spl.NATIVE_MINT, this.pubkey),
-                    tokenProgram: spl.TOKEN_PROGRAM_ID,
-                    associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
-                    wrappedSolMint: spl.NATIVE_MINT,
+                    payer,
+                    recentSlothashes: SPL_SYSVAR_SLOT_HASHES_ID,
+                    systemProgram: web3.SystemProgram.programId,
+                    rewardEscrow: spl.getAssociatedTokenAddressSync(SOL_NATIVE_MINT, this.pubkey),
+                    tokenProgram: SPL_TOKEN_PROGRAM_ID,
+                    associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+                    wrappedSolMint: SOL_NATIVE_MINT,
                     programState: State.keyFromSeed(this.program),
                 },
             });
@@ -177,65 +207,65 @@ export class Randomness {
      * @param {number} [configs.computeUnitLimit] - The compute unit limit.
      * @returns {Promise<void>} A promise that resolves when the transaction is confirmed.
      */
-    commitAndReveal(callback, signers, queue, configs) {
+    commitAndReveal(callback, signers, queue, configs, debug) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, _b;
-            const queueAccount = new Queue(this.program, queue);
-            const oracle = yield queueAccount.fetchFreshOracle();
-            const computeUnitPrice = (_a = configs === null || configs === void 0 ? void 0 : configs.computeUnitPrice) !== null && _a !== void 0 ? _a : 1;
+            // In this function (because its 2 back to back transactions) we need to use the payer from the
+            // provider as the authority for the commit transaction.
+            const authority = spl.getNodePayer(this.program);
+            const computeUnitPrice = (_a = configs === null || configs === void 0 ? void 0 : configs.computeUnitPrice) !== null && _a !== void 0 ? _a : 50000;
             const computeUnitLimit = (_b = configs === null || configs === void 0 ? void 0 : configs.computeUnitLimit) !== null && _b !== void 0 ? _b : 200000;
             const connection = this.program.provider.connection;
-            const payer = this.program.provider.wallet.payer;
             for (;;) {
                 const data = yield this.loadData();
                 if (data.seedSlot.toNumber() !== 0) {
-                    console.log("Randomness slot already committed. Jumping to reveal.");
+                    if (debug) {
+                        console.log('Randomness slot already committed. Jumping to reveal.');
+                    }
                     break;
                 }
                 const tx = yield InstructionUtils.asV0TxWithComputeIxs({
-                    connection: this.program.provider.connection,
+                    connection,
                     ixs: [
-                        ComputeBudgetProgram.setComputeUnitPrice({
+                        web3.ComputeBudgetProgram.setComputeUnitPrice({
                             microLamports: computeUnitPrice,
                         }),
-                        yield this.commitIx(oracle, data.authority),
+                        yield this.commitIx(queue, data.authority),
                     ],
                 });
-                tx.sign([payer]);
+                tx.sign([authority]);
                 const sim = yield connection.simulateTransaction(tx, {
-                    commitment: "processed",
+                    commitment: 'processed',
                 });
                 if (sim.value.err !== null) {
-                    console.log(sim.value.logs);
+                    if (debug) {
+                        console.log('Logs', sim.value.logs);
+                    }
                     throw new Error(`Failed to simulate commit transaction: ${JSON.stringify(sim.value.err)}`);
                 }
                 const sig = yield connection.sendTransaction(tx, {
                     maxRetries: 2,
                     skipPreflight: true,
                 });
-                console.log(`Commit transaction sent: ${sig}`);
-                try {
-                    yield sendTxWithJito({
-                        serialisedTx: tx.serialize(),
-                        sendOptions: {},
-                        region: "mainnet",
-                    });
-                }
-                catch (e) {
-                    // console.log("Skipping Jito send");
+                if (debug) {
+                    console.log(`Commit transaction sent: ${sig}`);
                 }
                 try {
                     yield connection.confirmTransaction(sig);
-                    console.log(`Commit transaction confirmed: ${sig}`);
+                    if (debug) {
+                        console.log(`Commit transaction confirmed: ${sig}`);
+                    }
                     break;
                 }
-                catch (e) {
-                    console.log("Failed to confirm commit transaction. Retrying...");
-                    yield new Promise((f) => setTimeout(f, 1000));
+                catch (_c) {
+                    if (debug) {
+                        console.log('Failed to confirm commit transaction. Retrying...');
+                    }
+                    yield new Promise(f => setTimeout(f, 1000));
                     continue;
                 }
             }
-            yield new Promise((f) => setTimeout(f, 1000));
+            yield new Promise(f => setTimeout(f, 1000));
             for (;;) {
                 const data = yield this.loadData();
                 if (data.revealSlot.toNumber() !== 0) {
@@ -243,115 +273,102 @@ export class Randomness {
                 }
                 let revealIx = undefined;
                 try {
-                    revealIx = yield this.revealIx();
+                    revealIx = yield this.revealIx(authority.publicKey);
                 }
                 catch (e) {
-                    console.log(e);
-                    console.log("Failed to grab reveal signature. Retrying...");
-                    yield new Promise((f) => setTimeout(f, 1000));
+                    if (debug) {
+                        console.log(e);
+                        console.log('Failed to grab reveal signature. Retrying...');
+                    }
+                    yield new Promise(f => setTimeout(f, 1000));
                     continue;
                 }
                 const tx = yield InstructionUtils.asV0TxWithComputeIxs({
                     connection: this.program.provider.connection,
                     ixs: [
-                        ComputeBudgetProgram.setComputeUnitPrice({
+                        web3.ComputeBudgetProgram.setComputeUnitPrice({
                             microLamports: computeUnitPrice,
                         }),
-                        ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }),
+                        web3.ComputeBudgetProgram.setComputeUnitLimit({
+                            units: computeUnitLimit,
+                        }),
                         revealIx,
                         ...callback,
                     ],
                 });
-                tx.sign(signers);
+                tx.sign([authority, ...signers]);
                 const sim = yield connection.simulateTransaction(tx, {
-                    commitment: "processed",
+                    commitment: 'processed',
                 });
                 if (sim.value.err !== null) {
-                    console.log(sim.value.logs);
+                    if (debug) {
+                        console.log('Logs', sim.value.logs);
+                    }
                     throw new Error(`Failed to simulate commit transaction: ${JSON.stringify(sim.value.err)}`);
                 }
                 const sig = yield connection.sendTransaction(tx, {
                     maxRetries: 2,
                     skipPreflight: true,
                 });
-                console.log(`RevealAndCallback transaction sent: ${sig}`);
-                try {
-                    yield sendTxWithJito({
-                        serialisedTx: tx.serialize(),
-                        sendOptions: {},
-                        region: "mainnet",
-                    });
-                }
-                catch (e) {
-                    // console.log("Skipping Jito send");
+                if (debug) {
+                    console.log(`RevealAndCallback transaction sent: ${sig}`);
                 }
                 yield connection.confirmTransaction(sig);
-                console.log(`RevealAndCallback transaction confirmed: ${sig}`);
-            }
-        });
-    }
-    /**
-     * Serialize ix to file.
-     *
-     * @param {TransactionInstruction[]} revealIxs - The reveal instruction of a transaction.
-     * @param {string} [fileName="serializedIx.bin"] - The name of the file to save the serialized IX to.
-     * @throws Will throw an error if the request fails.
-     * @returns {Promise<void>} A promise that resolves when the file has been written.
-     */
-    serializeIxToFile(revealIxs_1) {
-        return __awaiter(this, arguments, void 0, function* (revealIxs, fileName = "serializedIx.bin") {
-            const tx = yield InstructionUtils.asV0TxWithComputeIxs({
-                connection: this.program.provider.connection,
-                ixs: revealIxs,
-                payer: PublicKey.default,
-            });
-            fs.writeFile(fileName, tx.serialize(), (err) => {
-                if (err) {
-                    console.error("Failed to write to file:", err);
-                    throw err;
+                if (debug) {
+                    console.log(`RevealAndCallback transaction confirmed: ${sig}`);
                 }
-            });
+            }
         });
     }
     /**
      * Creates a new `Randomness` account and prepares a commit transaction instruction.
      *
      * @param {Program} program - The Anchor program instance.
-     * @param {PublicKey} queue - The queue account to associate with the new `Randomness` account.
-     * @returns {Promise<[Randomness, Keypair, TransactionInstruction[]]>} A promise that resolves to a tuple containing the new `Randomness` instance, the keypair, and an array of transaction instructions.
+     * @param {web3.PublicKey} queue - The queue account to associate with the new `Randomness` account.
+     * @returns {Promise<[Randomness, web3.Keypair, web3.TransactionInstruction[]]>} A promise that resolves to a tuple containing the new `Randomness` instance, the keypair, and an array of transaction instructions.
      */
-    static createAndCommitIxs(program, queue) {
+    static createAndCommitIxs(program, queue, payer_) {
         return __awaiter(this, void 0, void 0, function* () {
-            const kp = Keypair.generate();
-            const lutSigner = (yield PublicKey.findProgramAddress([Buffer.from("LutSigner"), kp.publicKey.toBuffer()], program.programId))[0];
-            const recentSlot = yield program.provider.connection.getSlot("finalized");
-            const [_, lut] = AddressLookupTableProgram.createLookupTable({
-                authority: lutSigner,
-                payer: PublicKey.default,
-                recentSlot,
-            });
-            const queueAccount = new Queue(program, queue);
-            const oracle = yield queueAccount.fetchFreshOracle();
-            const creationIx = program.instruction.randomnessInit({}, {
+            const payer = Randomness.getPayer(program, payer_);
+            const accountKeypair = web3.Keypair.generate();
+            const [account, creationIx] = yield Randomness.create(
+            /* program= */ program, 
+            /* kp= */ accountKeypair, 
+            /* queue= */ queue, 
+            /* payer= */ payer);
+            const commitIx = yield account.commitIx(
+            /* queue= */ queue, 
+            /* authority= */ payer);
+            // TODO: Why do we return the account keypair? The authority is already set to the payer right?
+            return [account, accountKeypair, [creationIx, commitIx]];
+        });
+    }
+    /**
+     * Generate a randomness `close` solana transaction instruction.
+     * This will close the randomness account and return the rent to the authority.
+     *
+     * @returns {Promise<web3.TransactionInstruction>} A promise that resolves to the transaction instruction.
+     */
+    closeIx() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const data = yield this.loadData();
+            const lutSigner = getLutSigner(this.program.programId, this.pubkey);
+            const lutKey = getLutKey(lutSigner, data.lutSlot);
+            const ix = this.program.instruction.randomnessClose({}, {
                 accounts: {
-                    randomness: kp.publicKey,
-                    queue,
-                    authority: program.provider.publicKey,
-                    payer: program.provider.publicKey,
-                    rewardEscrow: spl.getAssociatedTokenAddressSync(spl.NATIVE_MINT, kp.publicKey),
-                    systemProgram: SystemProgram.programId,
-                    tokenProgram: spl.TOKEN_PROGRAM_ID,
-                    associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
-                    wrappedSolMint: spl.NATIVE_MINT,
-                    programState: State.keyFromSeed(program),
-                    lutSigner,
-                    lut,
-                    addressLookupTableProgram: AddressLookupTableProgram.programId,
+                    randomness: this.pubkey,
+                    rewardEscrow: spl.getAssociatedTokenAddressSync(SOL_NATIVE_MINT, this.pubkey),
+                    authority: data.authority,
+                    programState: State.keyFromSeed(this.program),
+                    systemProgram: web3.SystemProgram.programId,
+                    tokenProgram: SPL_TOKEN_PROGRAM_ID,
+                    wrappedSolMint: SOL_NATIVE_MINT,
+                    lut: lutKey,
+                    lutSigner: lutSigner,
+                    addressLookupTableProgram: web3.AddressLookupTableProgram.programId,
                 },
             });
-            const newRandomness = new Randomness(program, kp.publicKey);
-            const commitIx = yield newRandomness.commitIx(oracle, program.provider.publicKey);
-            return [newRandomness, kp, [creationIx, commitIx]];
+            return ix;
         });
     }
 }

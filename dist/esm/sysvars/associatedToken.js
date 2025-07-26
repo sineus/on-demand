@@ -1,15 +1,14 @@
-import { SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID } from "../constants.js";
-import { TOKEN_PROGRAM_ID } from "./../utils/index.js";
-import { PublicKey } from "@solana/web3.js";
+import { SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID, SPL_TOKEN_PROGRAM_ID, } from '../constants.js';
+import { web3 } from '@coral-xyz/anchor-31';
 export class AssociatedTokenProgram {
     constructor() { }
     /**
      * Find the associated token address for the given wallet and token mint
      */
     findAssociatedTokenAddress(walletAddress, tokenMintAddress) {
-        return PublicKey.findProgramAddressSync([
+        return web3.PublicKey.findProgramAddressSync([
             walletAddress.toBuffer(),
-            TOKEN_PROGRAM_ID.toBuffer(),
+            SPL_TOKEN_PROGRAM_ID.toBuffer(),
             tokenMintAddress.toBuffer(),
         ], SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID);
     }

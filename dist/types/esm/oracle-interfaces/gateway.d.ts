@@ -1,10 +1,25 @@
-import type { FeedRequest } from "./../accounts/pullFeed.js";
-import type * as anchor from "@coral-xyz/anchor-30";
-import type { PublicKey } from "@solana/web3.js";
-import { OracleJob } from "@switchboard-xyz/common";
+import { Surge } from './../classes/surge.js';
+import type { BN, web3 } from '@coral-xyz/anchor-31';
+import type { Program } from '@coral-xyz/anchor-31';
+import type { IOracleJob } from '@switchboard-xyz/common';
+import { CrossbarClient } from '@switchboard-xyz/common';
 /**
- *  The response from the gateway after fetching signatures.
- *  Variables are snake_case for serialization.
+ * Configuration for a feed request to oracle operators
+ */
+export type FeedRequest = {
+    /** Maximum allowed variance between oracle responses (e.g., 1.0 = 100%) */
+    maxVariance?: number;
+    /** Minimum number of oracle responses required */
+    minResponses?: number;
+    /** Array of oracle job definitions */
+    jobs: IOracleJob[];
+};
+/**
+ * Response from a single oracle for a feed evaluation
+ *
+ * Contains the oracle's signed response including the computed value,
+ * signature, and metadata. Variables are snake_case for serialization
+ * compatibility with the gateway API.
  */
 export type FeedEvalResponse = {
     /**
@@ -72,6 +87,25 @@ export type FeedEvalBatchResponse = {
 export type FetchSignaturesBatchResponse = {
     oracle_responses: FeedEvalBatchResponse[];
     errors: string[];
+};
+export type FetchSignaturesConsensusResponse = {
+    median_responses: {
+        value: string;
+        feed_hash: string;
+        num_oracles: number;
+    }[];
+    oracle_responses: {
+        oracle_pubkey: string;
+        eth_address: string;
+        signature: string;
+        checksum: string;
+        recovery_id: number;
+        feed_responses: FeedEvalResponse[];
+        errors: string[];
+        oracle_idx: number;
+        min_oracle_samples: number;
+    }[];
+    slot: BN;
 };
 /**
  *  The response from the gateway after revealing randomness.
@@ -234,19 +268,60 @@ export interface BridgeEnclaveResponse {
     recovery_id: number;
 }
 /**
- *  The gateway class is used to interface with the switchboard gateway REST API.
+ * Gateway interface for oracle communication
+ *
+ * The Gateway class provides the connection between your application
+ * and Switchboard oracle operators. It handles:
+ *
+ * - Fetching signed price data from oracles
+ * - Managing oracle selection and consensus
+ * - Batch operations for multiple feeds
+ * - Network latency optimization
+ *
+ * Gateways are geo-distributed endpoints that route requests to
+ * available oracle operators for optimal performance.
+ *
+ * @example
+ * ```typescript
+ * // Create gateway from URL
+ * const gateway = new Gateway(program, 'https://gateway.switchboard.xyz');
+ *
+ * // Fetch signatures for feeds
+ * const response = await gateway.fetchSignatures({
+ *   feedConfigs: [{
+ *     jobs: [buildBinanceJob('BTCUSDT')],
+ *     maxVariance: 1.0,
+ *     minResponses: 3,
+ *   }],
+ *   numSignatures: 5,
+ * });
+ * ```
+ *
+ * @class Gateway
  */
 export declare class Gateway {
-    readonly program: anchor.Program;
+    readonly program: Program;
     readonly gatewayUrl: string;
-    readonly oracleKey?: PublicKey;
+    readonly oracleKey?: web3.PublicKey | undefined;
     /**
-     *  Constructs a `Gateway` instance.
+     * Constructs a Gateway instance
      *
-     *  @param program The Anchor program instance.
-     *  @param gatewayUrl The URL of the switchboard gateway.
+     * @param {Program} program - The Anchor program instance
+     * @param {string} gatewayUrl - The URL of the switchboard gateway
+     * @param {web3.PublicKey} oracleKey - Optional specific oracle key
      */
-    constructor(program: anchor.Program, gatewayUrl: string, oracleKey?: PublicKey);
+    constructor(program: Program, gatewayUrl: string, oracleKey?: web3.PublicKey | undefined);
+    /**
+     * Initializes a Surge instance
+     * @param {Object} params - The parameters for the surge instance
+     * @param {string} params.apiKey - The API key for authentication
+     * @param {boolean} [params.verbose=false] - Whether to enable verbose logging
+     * @return {Surge} A new instance of dSurge
+     */
+    initSurge(params: {
+        apiKey: string;
+        verbose?: boolean;
+    }): Surge;
     /**
      *  Fetches signatures from the gateway.
      *
@@ -326,7 +401,7 @@ export declare class Gateway {
      */
     fetchSignatures(params: {
         recentHash?: string;
-        jobs: OracleJob[];
+        jobs: IOracleJob[];
         numSignatures?: number;
         maxVariance?: number;
         minResponses?: number;
@@ -389,6 +464,12 @@ export declare class Gateway {
         numSignatures: number;
         useTimestamp?: boolean;
     }): Promise<FetchSignaturesBatchResponse>;
+    fetchSignaturesConsensus(params: {
+        feedConfigs: FeedRequest[];
+        useTimestamp?: boolean;
+        numSignatures?: number;
+    }): Promise<FetchSignaturesConsensusResponse>;
+    fetchUpdateBundle(crossbar: CrossbarClient, feedHashes: string[], numSignatures?: number): Promise<FetchSignaturesConsensusResponse>;
     /**
      * Sends a request to the gateway bridge enclave.
      *
@@ -411,9 +492,10 @@ export declare class Gateway {
      * @returns The randomness reveal response.
      */
     fetchRandomnessReveal(params: {
-        randomnessAccount: PublicKey;
+        randomnessAccount: web3.PublicKey;
         slothash: string;
         slot: number;
+        rpc?: string;
     } | {
         randomnessId: string;
         timestamp: number;
@@ -422,6 +504,6 @@ export declare class Gateway {
     test(): Promise<boolean>;
     endpoint(): string;
     toString(): string;
-    [Symbol.toPrimitive](hint: string): string;
+    [Symbol.toPrimitive](hint: string): string | null;
 }
 //# sourceMappingURL=gateway.d.ts.map

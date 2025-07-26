@@ -2,17 +2,16 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AssociatedTokenProgram = void 0;
 const constants_js_1 = require("../constants.js");
-const index_js_1 = require("./../utils/index.js");
-const web3_js_1 = require("@solana/web3.js");
+const anchor_31_1 = require("@coral-xyz/anchor-31");
 class AssociatedTokenProgram {
     constructor() { }
     /**
      * Find the associated token address for the given wallet and token mint
      */
     findAssociatedTokenAddress(walletAddress, tokenMintAddress) {
-        return web3_js_1.PublicKey.findProgramAddressSync([
+        return anchor_31_1.web3.PublicKey.findProgramAddressSync([
             walletAddress.toBuffer(),
-            index_js_1.TOKEN_PROGRAM_ID.toBuffer(),
+            constants_js_1.SPL_TOKEN_PROGRAM_ID.toBuffer(),
             tokenMintAddress.toBuffer(),
         ], constants_js_1.SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID);
     }

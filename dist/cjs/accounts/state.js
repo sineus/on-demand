@@ -10,8 +10,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.State = void 0;
+const index_js_1 = require("../utils/index.js");
 const queue_js_1 = require("./queue.js");
-const web3_js_1 = require("@solana/web3.js");
+const anchor_31_1 = require("@coral-xyz/anchor-31");
+const buffer_1 = require("buffer");
 /**
  *  Abstraction around the Switchboard-On-Demand State account
  *
@@ -22,10 +24,10 @@ class State {
      * Derives a state PDA (Program Derived Address) from the program.
      *
      * @param {Program} program - The Anchor program instance.
-     * @returns {PublicKey} The derived state account's public key.
+     * @returns {web3.PublicKey} The derived state account's public key.
      */
     static keyFromSeed(program) {
-        const [state] = web3_js_1.PublicKey.findProgramAddressSync([Buffer.from("STATE")], program.programId);
+        const [state] = anchor_31_1.web3.PublicKey.findProgramAddressSync([buffer_1.Buffer.from('STATE')], program.programId);
         return state;
     }
     /**
@@ -36,12 +38,12 @@ class State {
      */
     static create(program) {
         return __awaiter(this, void 0, void 0, function* () {
-            const payer = program.provider.wallet.payer;
+            const payer = (0, index_js_1.getNodePayer)(program);
             const sig = yield program.rpc.stateInit({}, {
                 accounts: {
                     state: State.keyFromSeed(program),
                     payer: payer.publicKey,
-                    systemProgram: web3_js_1.SystemProgram.programId,
+                    systemProgram: anchor_31_1.web3.SystemProgram.programId,
                 },
                 signers: [payer],
             });
@@ -62,51 +64,40 @@ class State {
      * Set program-wide configurations.
      *
      * @param {object} params - The configuration parameters.
-     * @param {PublicKey} [params.guardianQueue] - The guardian queue account.
-     * @param {PublicKey} [params.newAuthority] - The new authority account.
+     * @param {web3.PublicKey} [params.guardianQueue] - The guardian queue account.
+     * @param {web3.PublicKey} [params.newAuthority] - The new authority account.
      * @param {BN} [params.minQuoteVerifyVotes] - The minimum number of votes required to verify a quote.
-     * @param {PublicKey} [params.stakeProgram] - The stake program account.
-     * @param {PublicKey} [params.stakePool] - The stake pool account.
      * @param {number} [params.permitAdvisory] - The permit advisory value.
      * @param {number} [params.denyAdvisory] - The deny advisory value.
      * @param {boolean} [params.testOnlyDisableMrEnclaveCheck] - A flag to disable MrEnclave check for testing purposes.
-     * @param {PublicKey} [params.switchMint] - The switch mint account.
-     * @param {BN} [params.epochLength] - The epoch length.
-     * @param {boolean} [params.resetEpochs] - A flag to reset epochs.
-     * @param {boolean} [params.enableStaking] - A flag to enable staking.
-     * @returns {Promise<TransactionInstruction>} A promise that resolves to the transaction instruction.
+     * @param {web3.PublicKey} [params.switchMint] - The switch mint account.
+     * @returns {Promise<web3.TransactionInstruction>} A promise that resolves to the transaction instruction.
      */
     setConfigsIx(params) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+            var _a, _b, _c, _d, _e, _f, _g, _h;
             const state = yield this.loadData();
             const queue = (_a = params.guardianQueue) !== null && _a !== void 0 ? _a : state.guardianQueue;
-            const program = this.program;
-            const payer = program.provider.wallet.payer;
+            const payer = (0, index_js_1.getNodePayer)(this.program);
             const testOnlyDisableMrEnclaveCheck = (_b = params.testOnlyDisableMrEnclaveCheck) !== null && _b !== void 0 ? _b : state.testOnlyDisableMrEnclaveCheck;
-            const resetEpochs = (_c = params.resetEpochs) !== null && _c !== void 0 ? _c : false;
             const ix = yield this.program.instruction.stateSetConfigs({
-                newAuthority: (_d = params.newAuthority) !== null && _d !== void 0 ? _d : state.authority,
+                newAuthority: (_c = params.newAuthority) !== null && _c !== void 0 ? _c : state.authority,
                 testOnlyDisableMrEnclaveCheck: testOnlyDisableMrEnclaveCheck ? 1 : 0,
-                stakePool: (_e = params.stakePool) !== null && _e !== void 0 ? _e : state.stakePool,
-                stakeProgram: (_f = params.stakeProgram) !== null && _f !== void 0 ? _f : state.stakeProgram,
                 addAdvisory: params.permitAdvisory,
                 rmAdvisory: params.denyAdvisory,
-                epochLength: (_g = params.epochLength) !== null && _g !== void 0 ? _g : state.epochLength,
-                resetEpochs: resetEpochs,
                 lutSlot: state.lutSlot,
-                switchMint: (_h = params.switchMint) !== null && _h !== void 0 ? _h : state.switchMint,
-                enableStaking: (_j = params.enableStaking) !== null && _j !== void 0 ? _j : state.enableStaking,
-                authority: (_k = params.newAuthority) !== null && _k !== void 0 ? _k : state.authority,
-                addCostWl: (_l = params.addCostWl) !== null && _l !== void 0 ? _l : web3_js_1.PublicKey.default,
-                rmCostWl: (_m = params.rmCostWl) !== null && _m !== void 0 ? _m : web3_js_1.PublicKey.default,
+                subsidyAmount: (_d = params.subsidyAmount) !== null && _d !== void 0 ? _d : state.subsidyAmount,
+                switchMint: (_e = params.switchMint) !== null && _e !== void 0 ? _e : state.switchMint,
+                authority: (_f = params.newAuthority) !== null && _f !== void 0 ? _f : state.authority,
+                addCostWl: (_g = params.addCostWl) !== null && _g !== void 0 ? _g : anchor_31_1.web3.PublicKey.default,
+                rmCostWl: (_h = params.rmCostWl) !== null && _h !== void 0 ? _h : anchor_31_1.web3.PublicKey.default,
             }, {
                 accounts: {
                     state: this.pubkey,
                     authority: state.authority,
                     queue,
                     payer: payer.publicKey,
-                    systemProgram: web3_js_1.SystemProgram.programId,
+                    systemProgram: anchor_31_1.web3.SystemProgram.programId,
                 },
             });
             return ix;
@@ -122,8 +113,7 @@ class State {
     registerGuardianIx(params) {
         return __awaiter(this, void 0, void 0, function* () {
             const state = yield this.loadData();
-            const program = this.program;
-            const payer = program.provider.wallet.payer;
+            const payer = (0, index_js_1.getNodePayer)(this.program);
             const ix = yield this.program.instruction.guardianRegister({}, {
                 accounts: {
                     oracle: params.guardian,
@@ -140,17 +130,16 @@ class State {
      * Unregister a guardian from the global guardian queue.
      *
      * @param {object} params - The parameters object.
-     * @param {PublicKey} params.guardian - The guardian account.
-     * @returns {Promise<TransactionInstruction>} A promise that resolves to the transaction instruction.
+     * @param {web3.PublicKey} params.guardian - The guardian account.
+     * @returns {Promise<web3.TransactionInstruction>} A promise that resolves to the transaction instruction.
      */
     unregisterGuardianIx(params) {
         return __awaiter(this, void 0, void 0, function* () {
             const state = yield this.loadData();
             const guardianQueue = new queue_js_1.Queue(this.program, state.guardianQueue);
             const queueData = yield guardianQueue.loadData();
-            const idx = queueData.guardians.findIndex((key) => key.equals(params.guardian));
-            const program = this.program;
-            const payer = program.provider.wallet.payer;
+            const idx = queueData.oracleKeys.findIndex(key => key.equals(params.guardian));
+            const payer = (0, index_js_1.getNodePayer)(this.program);
             const ix = yield this.program.instruction.guardianUnregister({ idx }, {
                 accounts: {
                     oracle: params.guardian,
@@ -171,7 +160,7 @@ class State {
      */
     loadData() {
         return __awaiter(this, void 0, void 0, function* () {
-            return yield this.program.account["state"].fetch(this.pubkey);
+            return yield this.program.account['state'].fetch(this.pubkey);
         });
     }
     /**
@@ -182,8 +171,7 @@ class State {
      */
     static loadData(program) {
         return __awaiter(this, void 0, void 0, function* () {
-            const state = new State(program);
-            return yield state.loadData();
+            return yield new State(program).loadData();
         });
     }
 }

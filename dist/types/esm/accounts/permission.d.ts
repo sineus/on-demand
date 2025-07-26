@@ -1,5 +1,4 @@
-import type { Program } from "@coral-xyz/anchor-30";
-import type { PublicKey, TransactionInstruction } from "@solana/web3.js";
+import type { Program, web3 } from '@coral-xyz/anchor-31';
 export declare enum SwitchboardPermission {
     PermitOracleHeartbeat = 1,
     PermitOracleQueueUsage = 2
@@ -16,12 +15,12 @@ export declare class Permission {
      *  @returns A promise that resolves to the transaction instruction.
      */
     static setIx(program: Program, params: {
-        authority: PublicKey;
-        granter: PublicKey;
-        grantee: PublicKey;
+        authority: web3.PublicKey;
+        granter: web3.PublicKey;
+        grantee: web3.PublicKey;
         enable?: boolean;
         permission: SwitchboardPermission;
-    }): Promise<TransactionInstruction>;
+    }): Promise<web3.TransactionInstruction>;
     /**
      *  Disable object instantiation.
      */

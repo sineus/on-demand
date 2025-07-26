@@ -7,52 +7,81 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { TTLCache } from "@brokerloop/ttlcache";
-import { OracleJob } from "@switchboard-xyz/common";
-import axios from "axios";
-import * as bs58 from "bs58";
-const GATEWAY_PING_CACHE = new TTLCache({
-    ttl: 100,
-    max: 50,
-    clock: Date,
-});
-// const httpsAgent = new HttpsAgent({
-//   rejectUnauthorized: false, // WARNING: This disables SSL/TLS certificate verification.
-// });
+import { Surge } from './../classes/surge.js';
+import { GATEWAY_PING_CACHE } from './../utils/cache.js';
+import { OracleFeedUtils, OracleJobUtils, } from '@switchboard-xyz/common';
+import axios from 'axios';
+import bs58 from 'bs58';
 const TIMEOUT = 10000;
 const axiosClient = (() => {
     let instance;
-    return () => {
-        if (!instance) {
-            instance = axios.create();
-        }
-        return instance;
-    };
+    return () => (instance !== null && instance !== void 0 ? instance : (instance = axios.create()));
 })();
 /**
- *  base64 encodes an array of oracle jobs. to send to a gateway
+ *  `base64` encodes an array of oracle jobs. to send to a gateway
  */
 function encodeJobs(jobArray) {
-    return jobArray.map((job) => {
-        const encoded = OracleJob.encodeDelimited(OracleJob.fromObject(job)).finish();
-        // const decoded = OracleJob.decodeDelimited(encoded);
-        return Buffer.from(encoded).toString("base64");
-    });
+    return jobArray.map(job => OracleJobUtils.serializeOracleJob(job).toString('base64'));
 }
 /**
- *  The gateway class is used to interface with the switchboard gateway REST API.
+ * Gateway interface for oracle communication
+ *
+ * The Gateway class provides the connection between your application
+ * and Switchboard oracle operators. It handles:
+ *
+ * - Fetching signed price data from oracles
+ * - Managing oracle selection and consensus
+ * - Batch operations for multiple feeds
+ * - Network latency optimization
+ *
+ * Gateways are geo-distributed endpoints that route requests to
+ * available oracle operators for optimal performance.
+ *
+ * @example
+ * ```typescript
+ * // Create gateway from URL
+ * const gateway = new Gateway(program, 'https://gateway.switchboard.xyz');
+ *
+ * // Fetch signatures for feeds
+ * const response = await gateway.fetchSignatures({
+ *   feedConfigs: [{
+ *     jobs: [buildBinanceJob('BTCUSDT')],
+ *     maxVariance: 1.0,
+ *     minResponses: 3,
+ *   }],
+ *   numSignatures: 5,
+ * });
+ * ```
+ *
+ * @class Gateway
  */
 export class Gateway {
     /**
-     *  Constructs a `Gateway` instance.
+     * Constructs a Gateway instance
      *
-     *  @param program The Anchor program instance.
-     *  @param gatewayUrl The URL of the switchboard gateway.
+     * @param {Program} program - The Anchor program instance
+     * @param {string} gatewayUrl - The URL of the switchboard gateway
+     * @param {web3.PublicKey} oracleKey - Optional specific oracle key
      */
     constructor(program, gatewayUrl, oracleKey) {
         this.program = program;
         this.gatewayUrl = gatewayUrl;
         this.oracleKey = oracleKey;
+    }
+    /**
+     * Initializes a Surge instance
+     * @param {Object} params - The parameters for the surge instance
+     * @param {string} params.apiKey - The API key for authentication
+     * @param {boolean} [params.verbose=false] - Whether to enable verbose logging
+     * @return {Surge} A new instance of dSurge
+     */
+    initSurge(params) {
+        var _a;
+        return new Surge({
+            apiKey: params.apiKey,
+            gatewayUrl: this.gatewayUrl,
+            verbose: (_a = params.verbose) !== null && _a !== void 0 ? _a : false,
+        });
     }
     /**
      *  Fetches signatures from the gateway.
@@ -71,14 +100,14 @@ export class Gateway {
             // TODO: have total NumOracles count against rate limit per IP
             const { recentHash, encodedJobs, numSignatures } = params;
             const url = `${this.gatewayUrl}/gateway/api/v1/fetch_signatures`;
-            const headers = { "Content-Type": "application/json" };
+            const headers = { 'Content-Type': 'application/json' };
             const maxVariance = params.maxVariance * 1e9;
             const body = JSON.stringify({
-                api_version: "1.0.0",
+                api_version: '1.0.0',
                 jobs_b64_encoded: encodedJobs,
                 recent_chainhash: recentHash !== null && recentHash !== void 0 ? recentHash : bs58.encode(Buffer.alloc(32, 0)),
-                signature_scheme: "Secp256k1",
-                hash_scheme: "Sha256",
+                signature_scheme: 'Secp256k1',
+                hash_scheme: 'Sha256',
                 num_oracles: numSignatures,
                 max_variance: maxVariance,
                 min_responses: params.minResponses,
@@ -89,18 +118,18 @@ export class Gateway {
                 headers,
                 timeout: TIMEOUT,
             })
-                .then((r) => r.data);
+                .then(r => r.data);
         });
     }
     ping() {
         return __awaiter(this, void 0, void 0, function* () {
             const url = `${this.gatewayUrl}/gateway/api/v1/ping`;
-            const method = "POST";
-            const headers = { "Content-Type": "application/json" };
-            const body = JSON.stringify({ api_version: "1.0.0" });
+            const method = 'POST';
+            const headers = { 'Content-Type': 'application/json' };
+            const body = JSON.stringify({ api_version: '1.0.0' });
             return axiosClient()
                 .post(url, body, { method, headers, timeout: TIMEOUT })
-                .then((r) => r.data);
+                .then(r => r.data);
         });
     }
     /**
@@ -119,12 +148,11 @@ export class Gateway {
      */
     fetchAttestation(params) {
         return __awaiter(this, void 0, void 0, function* () {
-            const api_version = "1.0.0";
             const url = `${this.gatewayUrl}/gateway/api/v1/gateway_attest_enclave`;
-            const method = "POST";
-            const headers = { "Content-Type": "application/json" };
+            const method = 'POST';
+            const headers = { 'Content-Type': 'application/json' };
             const body = JSON.stringify({
-                api_version,
+                api_version: '1.0.0',
                 timestamp: params.timestamp,
                 quote: params.quote,
                 oracle_pubkey: params.oracle_pubkey,
@@ -135,7 +163,7 @@ export class Gateway {
             });
             return axiosClient()
                 .post(url, { method, headers, data: body, timeout: TIMEOUT })
-                .then((r) => r.data);
+                .then(r => r.data);
         });
     }
     /**
@@ -152,21 +180,18 @@ export class Gateway {
      */
     fetchQuote(params) {
         return __awaiter(this, void 0, void 0, function* () {
-            const api_version = "1.0.0";
             const url = `${this.endpoint()}/gateway/api/v1/gateway_fetch_quote`;
-            const method = "POST";
-            const headers = { "Content-Type": "application/json" };
+            const method = 'POST';
+            const headers = { 'Content-Type': 'application/json' };
             const body = JSON.stringify({
-                api_version,
+                api_version: '1.0.0',
                 blockhash: params.blockhash,
                 get_for_oracle: params.get_for_oracle,
                 get_for_guardian: params.get_for_guardian,
             });
             return axiosClient()
                 .post(url, { method, headers, data: body, timeout: TIMEOUT })
-                .then((r) => __awaiter(this, void 0, void 0, function* () {
-                return r.data;
-            }));
+                .then(r => r.data);
         });
     }
     // alberthermida@Switchboard ts % curl -X POST \
@@ -214,14 +239,13 @@ export class Gateway {
     fetchSignaturesMulti(params) {
         return __awaiter(this, void 0, void 0, function* () {
             const { recentHash, feedConfigs, useTimestamp, numSignatures } = params;
-            const encodedConfigs = feedConfigs.map((config) => {
+            const encodedConfigs = feedConfigs.map(config => {
                 var _a, _b;
-                const encodedJobs = encodeJobs(config.jobs);
-                return {
-                    encodedJobs,
+                return ({
+                    encodedJobs: encodeJobs(config.jobs),
                     maxVariance: (_a = config.maxVariance) !== null && _a !== void 0 ? _a : 1,
                     minResponses: (_b = config.minResponses) !== null && _b !== void 0 ? _b : 1,
-                };
+                });
             });
             const res = yield this.fetchSignaturesFromEncodedMulti({
                 recentHash,
@@ -234,36 +258,37 @@ export class Gateway {
     }
     fetchSignaturesFromEncodedMulti(params) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c;
             // TODO: have total NumOracles count against rate limit per IP
             const { recentHash, encodedConfigs, numSignatures } = params;
+            if (numSignatures <= 0) {
+                throw new Error('numSignatures must be greater than 0');
+            }
             const url = `${this.gatewayUrl}/gateway/api/v1/fetch_signatures_multi`;
-            const method = "POST";
-            const headers = { "Content-Type": "application/json" };
+            const method = 'POST';
+            const headers = { 'Content-Type': 'application/json' };
             const body = {
-                api_version: "1.0.0",
+                api_version: '1.0.0',
                 num_oracles: numSignatures,
                 recent_hash: recentHash !== null && recentHash !== void 0 ? recentHash : bs58.encode(Buffer.alloc(32, 0)),
-                signature_scheme: "Secp256k1",
-                hash_scheme: "Sha256",
-                feed_requests: [],
+                signature_scheme: 'Secp256k1',
+                hash_scheme: 'Sha256',
+                feed_requests: encodedConfigs.map(config => {
+                    var _a, _b, _c;
+                    return ({
+                        jobs_b64_encoded: config.encodedJobs,
+                        max_variance: Math.floor(Number((_a = config.maxVariance) !== null && _a !== void 0 ? _a : 1) * 1e9),
+                        min_responses: (_b = config.minResponses) !== null && _b !== void 0 ? _b : 1,
+                        use_timestamp: (_c = params.useTimestamp) !== null && _c !== void 0 ? _c : false,
+                    });
+                }),
             };
-            for (const config of encodedConfigs) {
-                const maxVariance = Math.floor(Number((_a = config.maxVariance) !== null && _a !== void 0 ? _a : 1) * 1e9);
-                body.feed_requests.push({
-                    jobs_b64_encoded: config.encodedJobs,
-                    max_variance: maxVariance,
-                    min_responses: (_b = config.minResponses) !== null && _b !== void 0 ? _b : 1,
-                    use_timestamp: (_c = params.useTimestamp) !== null && _c !== void 0 ? _c : false,
-                });
-            }
             const data = JSON.stringify(body);
             try {
-                const resp = yield axiosClient()(url, { method, headers, data }).then((r) => r.data);
-                return resp;
+                const resp = yield axiosClient()(url, { method, headers, data });
+                return resp.data;
             }
             catch (err) {
-                console.error("fetchSignaturesFromEncodedMulti error", err);
+                console.error('fetchSignaturesFromEncodedMulti error', err);
                 throw err;
             }
         });
@@ -282,7 +307,7 @@ export class Gateway {
     fetchSignaturesBatch(params) {
         return __awaiter(this, void 0, void 0, function* () {
             const { recentHash, feedConfigs, useTimestamp, numSignatures } = params;
-            const encodedConfigs = feedConfigs.map((config) => {
+            const encodedConfigs = feedConfigs.map(config => {
                 var _a, _b;
                 const encodedJobs = encodeJobs(config.jobs);
                 return {
@@ -316,14 +341,14 @@ export class Gateway {
             var _a, _b, _c;
             const { recentHash, encodedConfigs, numSignatures } = params;
             const url = `${this.gatewayUrl}/gateway/api/v1/fetch_signatures_batch`;
-            const method = "POST";
-            const headers = { "Content-Type": "application/json" };
+            const method = 'POST';
+            const headers = { 'Content-Type': 'application/json' };
             const body = {
-                api_version: "1.0.0",
+                api_version: '1.0.0',
                 num_oracles: numSignatures,
                 recent_hash: recentHash !== null && recentHash !== void 0 ? recentHash : bs58.encode(Buffer.alloc(32, 0)),
-                signature_scheme: "Secp256k1",
-                hash_scheme: "Sha256",
+                signature_scheme: 'Secp256k1',
+                hash_scheme: 'Sha256',
                 feed_requests: [],
             };
             for (const config of encodedConfigs) {
@@ -338,13 +363,90 @@ export class Gateway {
             const data = JSON.stringify(body);
             // get size of data
             try {
-                const resp = yield axiosClient()(url, { method, headers, data }).then((r) => {
-                    return Object.assign({}, r.data);
-                });
-                return resp;
+                const resp = yield axiosClient()(url, { method, headers, data });
+                return resp.data;
             }
             catch (err) {
-                console.error("fetchSignaturesFromEncodedBatch error", err);
+                console.error('fetchSignaturesFromEncodedBatch error', err);
+                throw err;
+            }
+        });
+    }
+    fetchSignaturesConsensus(params) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            const { feedConfigs } = params;
+            const feedRequests = feedConfigs.map(config => {
+                var _a, _b;
+                return ({
+                    jobs_b64_encoded: encodeJobs(config.jobs),
+                    max_variance: Math.floor(Number((_a = config.maxVariance) !== null && _a !== void 0 ? _a : 1) * 1e9),
+                    min_responses: (_b = config.minResponses) !== null && _b !== void 0 ? _b : 1,
+                });
+            });
+            const url = `${this.gatewayUrl}/gateway/api/v1/fetch_signatures_consensus`;
+            const method = 'POST';
+            const headers = { 'Content-Type': 'application/json' };
+            const data = JSON.stringify({
+                api_version: '1.0.0',
+                recent_hash: '',
+                signature_scheme: 'Secp256k1',
+                hash_scheme: 'Sha256',
+                feed_requests: feedRequests,
+                num_oracles: (_a = params.numSignatures) !== null && _a !== void 0 ? _a : 1,
+            });
+            try {
+                const resp = yield axiosClient()(url, { method, headers, data });
+                return resp.data;
+            }
+            catch (err) {
+                console.error('fetchSignaturesConsensus error', err);
+                throw err;
+            }
+        });
+    }
+    fetchUpdateBundle(crossbar_1, feedHashes_1) {
+        return __awaiter(this, arguments, void 0, function* (crossbar, feedHashes, numSignatures = 1) {
+            const feedRequests = yield Promise.all(feedHashes.map((hash) => __awaiter(this, void 0, void 0, function* () {
+                var _a;
+                try {
+                    const oracleFeed = yield crossbar.fetchOracleFeed(hash);
+                    const minOracleResponses = (_a = oracleFeed.feed.minOracleSamples) !== null && _a !== void 0 ? _a : 1;
+                    if (numSignatures < minOracleResponses) {
+                        numSignatures = minOracleResponses;
+                    }
+                    const buffer = OracleFeedUtils.serializeOracleFeed(oracleFeed.feed).toString('base64');
+                    return {
+                        feed_proto_b64: buffer,
+                    };
+                }
+                catch (_b) {
+                    const { jobs } = yield crossbar.fetch(hash);
+                    return {
+                        jobs_b64_encoded: encodeJobs(jobs),
+                        max_variance: 1e9, // default to 1% variance
+                        min_responses: 1, // default to 1 job response
+                        min_oracles: 1, // default to 1 oracle response
+                    };
+                }
+            })));
+            const url = `${this.gatewayUrl}/gateway/api/v1/fetch_signatures_consensus`;
+            const method = 'POST';
+            const headers = { 'Content-Type': 'application/json' };
+            const data = JSON.stringify({
+                api_version: '1.0.0',
+                signature_scheme: 'Secp256k1',
+                hash_scheme: 'Sha256',
+                feed_requests: feedRequests,
+                recent_hash: '',
+                num_oracles: numSignatures,
+            });
+            try {
+                const resp = yield axiosClient()(url, { method, headers, data });
+                return resp.data;
+            }
+            catch (err) {
+                console.error('fetchUpdateBundle error', err);
                 throw err;
             }
         });
@@ -363,22 +465,17 @@ export class Gateway {
     fetchBridgingMessage(params) {
         return __awaiter(this, void 0, void 0, function* () {
             const url = `${this.gatewayUrl}/gateway/api/v1/gateway_bridge_enclave`;
-            const method = "POST";
-            const headers = { "Content-Type": "application/json" };
+            const method = 'POST';
+            const headers = { 'Content-Type': 'application/json' };
             const body = {
-                api_version: "1.0.0",
+                api_version: '1.0.0',
                 chain_hash: params.chainHash,
                 oracle_pubkey: params.oraclePubkey,
                 queue_pubkey: params.queuePubkey,
             };
             const data = JSON.stringify(body);
-            try {
-                const resp = yield axiosClient()(url, { method, headers, data }).then((r) => r.data);
-                return resp;
-            }
-            catch (error) {
-                throw error;
-            }
+            const resp = yield axiosClient()(url, { method, headers, data });
+            return resp.data;
         });
     }
     /**
@@ -389,17 +486,18 @@ export class Gateway {
     fetchRandomnessReveal(params) {
         return __awaiter(this, void 0, void 0, function* () {
             const url = `${this.gatewayUrl}/gateway/api/v1/randomness_reveal`;
-            const method = "POST";
-            const responseType = "text";
-            const headers = { "Content-Type": "application/json" };
+            const method = 'POST';
+            const responseType = 'text';
+            const headers = { 'Content-Type': 'application/json' };
             // Handle Solana and Cross-Chain Randomness
             let data;
-            if ("slot" in params) {
+            if ('slot' in params) {
                 // Solana Randomness
                 data = JSON.stringify({
                     slothash: [...bs58.decode(params.slothash)],
-                    randomness_key: params.randomnessAccount.toBuffer().toString("hex"),
+                    randomness_key: params.randomnessAccount.toBuffer().toString('hex'),
                     slot: params.slot,
+                    rpc: params.rpc,
                 });
             }
             else {
@@ -420,7 +518,7 @@ export class Gateway {
                 return JSON.parse(txtResponse.data);
             }
             catch (err) {
-                console.error("fetchRandomnessReveal error", err);
+                console.error('fetchRandomnessReveal error', err);
                 throw err;
             }
         });
@@ -429,9 +527,8 @@ export class Gateway {
         return __awaiter(this, void 0, void 0, function* () {
             const url = `${this.gatewayUrl}/gateway/api/v1/test`;
             const cachedResponse = GATEWAY_PING_CACHE.get(this.gatewayUrl);
-            if (cachedResponse !== undefined) {
+            if (cachedResponse !== undefined)
                 return cachedResponse;
-            }
             try {
                 const txt = yield axiosClient()(url);
                 if (txt.data.length !== 0) {
@@ -439,7 +536,7 @@ export class Gateway {
                     return true;
                 }
             }
-            catch (_a) { }
+            catch (_a) { } // eslint-disable-line no-empty
             GATEWAY_PING_CACHE.set(this.gatewayUrl, false);
             return false;
         });
@@ -454,10 +551,7 @@ export class Gateway {
         });
     }
     [Symbol.toPrimitive](hint) {
-        if (hint === "string") {
-            return `Gateway: ${this.toString()}`;
-        }
-        return null;
+        return hint === 'string' ? `Gateway: ${this.toString()}` : null;
     }
 }
 //# sourceMappingURL=gateway.js.map

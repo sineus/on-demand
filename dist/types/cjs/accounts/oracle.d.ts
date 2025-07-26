@@ -1,14 +1,44 @@
-import type { Program } from "@coral-xyz/anchor-30";
-import type { AddressLookupTableAccount, TransactionInstruction } from "@solana/web3.js";
-import { Keypair, PublicKey } from "@solana/web3.js";
+import type { Program } from '@coral-xyz/anchor-31';
+import { BN, web3 } from '@coral-xyz/anchor-31';
+export interface OracleAccountData {
+    enclave: {
+        enclaveSigner: web3.PublicKey;
+        mrEnclave: Uint8Array;
+        verificationStatus: number;
+        verificationTimestamp: BN;
+        validUntil: BN;
+        quoteRegistry: Uint8Array;
+        registryKey: Uint8Array;
+        secp256K1Signer: Uint8Array;
+        lastEd25519Signer: web3.PublicKey;
+        lastSecp256K1Signer: Uint8Array;
+        lastRotateSlot: BN;
+        guardianApprovers: web3.PublicKey[];
+        guardianApproversLen: number;
+        stagingEd25519Signer: web3.PublicKey;
+        stagingSecp256K1Signer: Uint8Array;
+        ethSigner: Uint8Array;
+    };
+    authority: web3.PublicKey;
+    queue: web3.PublicKey;
+    createdAt: BN;
+    lastHeartbeat: BN;
+    secpAuthority: Uint8Array;
+    gatewayUri: Uint8Array;
+    permissions: BN;
+    isOnQueue: boolean;
+    lutSlot: BN;
+    lastRewardEpoch: BN;
+    operator: web3.PublicKey;
+}
 /**
  *  This class represents an oracle account on chain.
  */
 export declare class Oracle {
     readonly program: Program;
-    readonly pubkey: PublicKey;
-    lut: AddressLookupTableAccount | null;
-    constructor(program: Program, pubkey: PublicKey);
+    readonly pubkey: web3.PublicKey;
+    lut: web3.AddressLookupTableAccount | null;
+    constructor(program: Program, pubkey: web3.PublicKey);
     /**
      * Creates a new oracle account. linked to the specified queue.
      * After creation the oracle still must receive run approval and verify their
@@ -20,8 +50,8 @@ export declare class Oracle {
      *
      */
     static create(program: Program, params: {
-        queue: PublicKey;
-    }): Promise<[Oracle, TransactionInstruction[], Keypair]>;
+        queue: web3.PublicKey;
+    }): Promise<[Oracle, web3.TransactionInstruction[], web3.Keypair]>;
     /**
      * Creates a new oracle account for SVM chains (non-solana). linked to the specified queue.
      * After creation the oracle still must receive run approval and verify their
@@ -33,37 +63,36 @@ export declare class Oracle {
      *
      */
     static createSVM(program: Program, params: {
-        queue: PublicKey;
-        sourceOracleKey: PublicKey;
-    }): Promise<[Oracle, TransactionInstruction[]]>;
+        queue: web3.PublicKey;
+        sourceOracleKey: web3.PublicKey;
+    }): Promise<[Oracle, web3.TransactionInstruction[]]>;
     /**
-     * ATODO: wrap this one up with the gateway bridge oracle fn
+     * TODO: wrap this one up with the gateway bridge oracle fn
      * @param params
      * @returns
      */
-    static quoteVerifySvmIx(program: Program, params: {
-        chain?: string;
-        network?: "mainnet" | "mainnet-beta" | "testnet" | "devnet";
-        queue: PublicKey;
-        attestee: PublicKey;
-        attester: PublicKey;
-    }): Promise<TransactionInstruction>;
-    updateDelegationRewardPoolsIx(params: {
-        overrideStakePool?: PublicKey;
-        overrideMint?: PublicKey;
-        authority: PublicKey;
-    }): Promise<TransactionInstruction>;
+    findSolanaOracleFromPDA(): Promise<{
+        oracleData: OracleAccountData;
+        oracle: web3.PublicKey;
+    }>;
     setConfigsIx(params: {
-        authority: PublicKey;
-    }): Promise<TransactionInstruction>;
+        authority: web3.PublicKey;
+    }): Promise<web3.TransactionInstruction>;
     /**
      *  Loads the oracle data for this {@linkcode Oracle} account from on chain.
      *
      *  @returns A promise that resolves to the oracle data.
      *  @throws if the oracle account does not exist.
      */
-    loadData(): Promise<any>;
+    loadData(): Promise<OracleAccountData>;
     fetchGateway(): Promise<string>;
+    /**
+     *  Loads the oracle data for this {@linkcode Oracle} account from on chain.
+     *
+     *  @returns A promise that resolves to the oracle data.
+     *  @throws if the oracle account does not exist.
+     */
+    static loadData(program: Program, pubkey: web3.PublicKey): Promise<OracleAccountData>;
     /**
      * Loads the oracle data for a list of {@linkcode Oracle} accounts from on chain.
      *
@@ -72,7 +101,7 @@ export declare class Oracle {
      * @returns A promise that resolves to an array of oracle data.
      * @throws if any of the oracle accounts do not exist.
      */
-    static loadMany(program: Program, keys: PublicKey[]): Promise<any[]>;
+    static loadMany(program: Program, keys: web3.PublicKey[]): Promise<(OracleAccountData | null)[]>;
     /**
      * Loads the oracle data and checks if the oracle is verified.
      *
@@ -85,9 +114,14 @@ export declare class Oracle {
      * Get the pubkey of the stats account for this oracle.
      * @returns A promise that resolves to the pubkey of the stats account.
      */
-    statsKey(): Promise<PublicKey>;
-    lutKey(): Promise<PublicKey>;
-    lookupTableKey(data: any): PublicKey;
-    loadLookupTable(): Promise<AddressLookupTableAccount>;
+    statsKey(): web3.PublicKey;
+    loadLookupTableKey(): Promise<web3.PublicKey>;
+    lookupTableKey(data: {
+        lutSlot: number | BN;
+    }): web3.PublicKey;
+    loadLookupTable(): Promise<web3.AddressLookupTableAccount>;
+    setOperatorIx(params: {
+        operator: web3.PublicKey;
+    }): Promise<web3.TransactionInstruction>;
 }
 //# sourceMappingURL=oracle.d.ts.map

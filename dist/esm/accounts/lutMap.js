@@ -7,10 +7,13 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import * as spl from "./../utils/index.js";
-import { Queue } from "./queue.js";
-import { State } from "./state.js";
-import { AddressLookupTableAccount, AddressLookupTableProgram, PublicKey, SystemProgram, } from "@solana/web3.js";
+import { SOL_NATIVE_MINT, SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID, SPL_TOKEN_PROGRAM_ID, } from '../constants.js';
+import { getAssociatedTokenAddress, getNodePayer } from '../utils/index.js';
+import { getLutSigner } from '../utils/lookupTable.js';
+import { Queue } from './queue.js';
+import { State } from './state.js';
+import { web3 } from '@coral-xyz/anchor-31';
+import { Buffer } from 'buffer';
 /**
  *  A map of LUTs to their public keys.
  *
@@ -23,8 +26,8 @@ export class LutMap {
      */
     static keyFromSeed(program, queue, authority) {
         return __awaiter(this, void 0, void 0, function* () {
-            const [lut] = PublicKey.findProgramAddressSync([
-                Buffer.from("LutMapAccountData"),
+            const [lut] = web3.PublicKey.findProgramAddressSync([
+                Buffer.from('LutMapAccountData'),
                 queue.toBuffer(),
                 authority.toBuffer(),
             ], program.programId);
@@ -44,7 +47,7 @@ export class LutMap {
      */
     static create(program, queue, slot) {
         return __awaiter(this, void 0, void 0, function* () {
-            const payer = program.provider.wallet.payer;
+            const payer = getNodePayer(program);
             const lutKey = yield LutMap.keyFromSeed(program, queue, payer.publicKey);
             const sig = yield program.rpc.lutMapInit({ slot }, {
                 accounts: {
@@ -52,7 +55,7 @@ export class LutMap {
                     queue: queue,
                     payer: payer.publicKey,
                     authority: payer.publicKey,
-                    systemProgram: SystemProgram.programId,
+                    systemProgram: web3.SystemProgram.programId,
                 },
                 signers: [payer],
             });
@@ -65,20 +68,20 @@ export class LutMap {
     }
     queueLutExtendIx(params) {
         return __awaiter(this, void 0, void 0, function* () {
-            const payer = this.program.provider.wallet.payer;
+            const payer = getNodePayer(this.program);
             const queueAccount = new Queue(this.program, params.queue);
             const queueData = yield queueAccount.loadData();
             const lutKey = yield LutMap.keyFromSeed(this.program, params.queue, payer.publicKey);
-            const lutSigner = (yield PublicKey.findProgramAddress([Buffer.from("LutSigner"), params.queue.toBuffer()], this.program.programId))[0];
+            const lutSigner = getLutSigner(this.program.programId, params.queue);
             const ix = yield this.program.instruction.queueLutExtend({ newKey: params.newKey }, {
                 accounts: {
                     queue: params.queue,
                     authority: queueData.authority,
                     lutSigner,
                     lut: lutKey,
-                    addressLookupTableProgram: AddressLookupTableProgram.programId,
+                    addressLookupTableProgram: web3.AddressLookupTableProgram.programId,
                     payer: payer.publicKey,
-                    systemProgram: SystemProgram.programId,
+                    systemProgram: web3.SystemProgram.programId,
                 },
             });
             return ix;
@@ -92,7 +95,7 @@ export class LutMap {
      */
     loadData() {
         return __awaiter(this, void 0, void 0, function* () {
-            return yield this.program.account["lutMapAccountData"].fetch(this.pubkey);
+            return yield this.program.account['lutMapAccountData'].fetch(this.pubkey);
         });
     }
     loadLut() {
@@ -100,28 +103,27 @@ export class LutMap {
             const data = yield this.loadData();
             const lutKey = data.lut;
             const lutAccountInfo = yield this.program.provider.connection.getAccountInfo(lutKey);
-            const lutData = AddressLookupTableAccount.deserialize(lutAccountInfo.data);
+            const lutData = web3.AddressLookupTableAccount.deserialize(lutAccountInfo.data);
             return [lutKey, lutData];
         });
     }
     syncLut(feeds) {
         return __awaiter(this, void 0, void 0, function* () {
             const wrapperData = yield this.loadData();
-            const [key, data] = yield this.loadLut();
             const queueKey = wrapperData.queue;
             const queue = new Queue(this.program, queueKey);
             const queueData = yield queue.loadData();
             const oracles = queueData.oracleKeys.slice(0, queueData.oracleKeysLen);
             const neededLutAccounts = [];
             neededLutAccounts.push(queueKey);
-            neededLutAccounts.push(spl.NATIVE_MINT);
-            neededLutAccounts.push(spl.TOKEN_PROGRAM_ID);
-            neededLutAccounts.push(spl.ASSOCIATED_TOKEN_PROGRAM_ID);
+            neededLutAccounts.push(SOL_NATIVE_MINT);
+            neededLutAccounts.push(SPL_TOKEN_PROGRAM_ID);
+            neededLutAccounts.push(SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID);
             neededLutAccounts.push(State.keyFromSeed(this.program));
             for (const oracle of oracles) {
                 for (const feed of feeds) {
-                    const [statsKey] = PublicKey.findProgramAddressSync([Buffer.from("OracleFeedStats"), feed.toBuffer(), oracle.toBuffer()], this.program.programId);
-                    const feedRewardEscrow = yield spl.getAssociatedTokenAddress(spl.NATIVE_MINT, feed);
+                    const [statsKey] = web3.PublicKey.findProgramAddressSync([Buffer.from('OracleFeedStats'), feed.toBuffer(), oracle.toBuffer()], this.program.programId);
+                    const feedRewardEscrow = yield getAssociatedTokenAddress(SOL_NATIVE_MINT, feed);
                     neededLutAccounts.push(statsKey);
                     neededLutAccounts.push(feed);
                     neededLutAccounts.push(oracle);
